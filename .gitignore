@@ -13,3 +13,5 @@ cmake-build-*/
 *.o
 *.obj
 *.exe
+/out
+/.vs

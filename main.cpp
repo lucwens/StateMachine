@@ -25,10 +25,12 @@ using namespace LaserTracker;
 // Helper function to print separator
 // ============================================================================
 
-void printSeparator(const std::string& title = "") {
+void printSeparator(const std::string &title = "")
+{
     std::cout << "\n";
     std::cout << "================================================================\n";
-    if (!title.empty()) {
+    if (!title.empty())
+    {
         std::cout << "  " << title << "\n";
         std::cout << "================================================================\n";
     }
@@ -45,7 +47,8 @@ void printSeparator(const std::string& title = "") {
  * Off -> Operational::Initializing -> Idle -> Tracking::Searching
  *     -> Tracking::Locked -> Tracking::Measuring -> back to Idle -> Off
  */
-void demoNormalOperation() {
+void demoNormalOperation()
+{
     printSeparator("DEMO 1: Normal Operation Flow");
 
     HSM tracker;
@@ -99,7 +102,8 @@ void demoNormalOperation() {
  * - Error during tracking
  * - Reset and recovery
  */
-void demoErrorHandling() {
+void demoErrorHandling()
+{
     printSeparator("DEMO 2: Error Handling and Recovery");
 
     HSM tracker;
@@ -145,7 +149,8 @@ void demoErrorHandling() {
  * - Target loss during measuring
  * - Reacquisition workflow
  */
-void demoTargetLoss() {
+void demoTargetLoss()
+{
     printSeparator("DEMO 3: Target Loss and Reacquisition");
 
     HSM tracker;
@@ -189,7 +194,8 @@ void demoTargetLoss() {
  * - Cannot measure while searching
  * - Events are rejected with feedback
  */
-void demoInvalidEvents() {
+void demoInvalidEvents()
+{
     printSeparator("DEMO 4: Invalid Event Handling");
 
     HSM tracker;
@@ -233,7 +239,8 @@ void demoInvalidEvents() {
  * - Getting hierarchical state names
  * - State pattern introspection
  */
-void demoStateInspection() {
+void demoStateInspection()
+{
     printSeparator("DEMO 5: State Inspection API");
 
     HSM tracker;
@@ -270,23 +277,29 @@ void demoStateInspection() {
  *
  * Runs through many state transitions to verify HSM robustness
  */
-void demoStressTest() {
+void demoStressTest()
+{
     printSeparator("DEMO 6: Comprehensive State Transition Test");
 
     HSM tracker;
     int successfulTransitions = 0;
-    int ignoredEvents = 0;
+    int ignoredEvents         = 0;
 
-    auto processAndCount = [&](const Event& e) {
-        if (tracker.processEvent(e)) {
+    auto processAndCount      = [&](const Event &e)
+    {
+        if (tracker.processEvent(e))
+        {
             ++successfulTransitions;
-        } else {
+        }
+        else
+        {
             ++ignoredEvents;
         }
     };
 
     // Run through multiple complete cycles
-    for (int cycle = 1; cycle <= 3; ++cycle) {
+    for (int cycle = 1; cycle <= 3; ++cycle)
+    {
         std::cout << "\n--- Cycle " << cycle << " ---\n";
 
         // Full workflow
@@ -297,10 +310,9 @@ void demoStressTest() {
         processAndCount(Events::StartMeasure{});
 
         // Multiple measurements
-        for (int m = 0; m < 5; ++m) {
-            processAndCount(Events::MeasurementComplete{
-                static_cast<double>(m), static_cast<double>(m * 2), static_cast<double>(m * 3)
-            });
+        for (int m = 0; m < 5; ++m)
+        {
+            processAndCount(Events::MeasurementComplete{static_cast<double>(m), static_cast<double>(m * 2), static_cast<double>(m * 3)});
         }
 
         processAndCount(Events::StopMeasure{});
@@ -320,7 +332,8 @@ void demoStressTest() {
 // Interactive Mode
 // ============================================================================
 
-void printHelp() {
+void printHelp()
+{
     std::cout << R"(
 Available Commands:
   power_on      - Power on the laser tracker
@@ -342,73 +355,100 @@ Available Commands:
 )";
 }
 
-void runInteractiveMode() {
+void runInteractiveMode()
+{
     printSeparator("INTERACTIVE MODE");
     std::cout << "Control the Laser Tracker HSM interactively.\n";
     printHelp();
 
-    HSM tracker;
+    HSM         tracker;
     std::string line;
 
-    while (true) {
+    while (true)
+    {
         std::cout << "\n[" << tracker.getCurrentStateName() << "] > ";
-        if (!std::getline(std::cin, line)) break;
+        if (!std::getline(std::cin, line))
+            break;
 
         std::istringstream iss(line);
-        std::string cmd;
+        std::string        cmd;
         iss >> cmd;
 
-        if (cmd.empty()) continue;
-        if (cmd == "quit" || cmd == "exit") break;
-        if (cmd == "help") { printHelp(); continue; }
-        if (cmd == "state") { tracker.printState(); continue; }
+        if (cmd.empty())
+            continue;
+        if (cmd == "quit" || cmd == "exit")
+            break;
+        if (cmd == "help")
+        {
+            printHelp();
+            continue;
+        }
+        if (cmd == "state")
+        {
+            tracker.printState();
+            continue;
+        }
 
-        if (cmd == "power_on") {
+        if (cmd == "power_on")
+        {
             tracker.processEvent(Events::PowerOn{});
         }
-        else if (cmd == "power_off") {
+        else if (cmd == "power_off")
+        {
             tracker.processEvent(Events::PowerOff{});
         }
-        else if (cmd == "init_ok") {
+        else if (cmd == "init_ok")
+        {
             tracker.processEvent(Events::InitComplete{});
         }
-        else if (cmd == "init_fail") {
+        else if (cmd == "init_fail")
+        {
             tracker.processEvent(Events::InitFailed{"User simulated failure"});
         }
-        else if (cmd == "search") {
+        else if (cmd == "search")
+        {
             tracker.processEvent(Events::StartSearch{});
         }
-        else if (cmd == "found") {
+        else if (cmd == "found")
+        {
             double dist = 1000.0;
             iss >> dist;
             tracker.processEvent(Events::TargetFound{dist});
         }
-        else if (cmd == "lost") {
+        else if (cmd == "lost")
+        {
             tracker.processEvent(Events::TargetLost{});
         }
-        else if (cmd == "measure") {
+        else if (cmd == "measure")
+        {
             tracker.processEvent(Events::StartMeasure{});
         }
-        else if (cmd == "point") {
+        else if (cmd == "point")
+        {
             double x = 0, y = 0, z = 0;
             iss >> x >> y >> z;
             tracker.processEvent(Events::MeasurementComplete{x, y, z});
         }
-        else if (cmd == "stop") {
+        else if (cmd == "stop")
+        {
             tracker.processEvent(Events::StopMeasure{});
         }
-        else if (cmd == "idle") {
+        else if (cmd == "idle")
+        {
             tracker.processEvent(Events::ReturnToIdle{});
         }
-        else if (cmd == "error") {
+        else if (cmd == "error")
+        {
             int code = 99;
             iss >> code;
             tracker.processEvent(Events::ErrorOccurred{code, "User simulated error"});
         }
-        else if (cmd == "reset") {
+        else if (cmd == "reset")
+        {
             tracker.processEvent(Events::Reset{});
         }
-        else {
+        else
+        {
             std::cout << "Unknown command: " << cmd << ". Type 'help' for available commands.\n";
         }
     }
@@ -420,7 +460,8 @@ void runInteractiveMode() {
 // Main Entry Point
 // ============================================================================
 
-void printMainMenu() {
+void printMainMenu()
+{
     std::cout << R"(
 ================================================================
    Laser Tracker HSM Demo - C++17 std::variant Implementation
@@ -443,11 +484,14 @@ Select a demo to run:
 )";
 }
 
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[])
+{
     // Check for command-line arguments
-    if (argc > 1) {
+    if (argc > 1)
+    {
         std::string arg = argv[1];
-        if (arg == "--all" || arg == "-a") {
+        if (arg == "--all" || arg == "-a")
+        {
             demoNormalOperation();
             demoErrorHandling();
             demoTargetLoss();
@@ -457,11 +501,13 @@ int main(int argc, char* argv[]) {
             printSeparator("ALL DEMOS COMPLETED SUCCESSFULLY");
             return 0;
         }
-        else if (arg == "--interactive" || arg == "-i") {
+        else if (arg == "--interactive" || arg == "-i")
+        {
             runInteractiveMode();
             return 0;
         }
-        else if (arg == "--help" || arg == "-h") {
+        else if (arg == "--help" || arg == "-h")
+        {
             std::cout << "Usage: " << argv[0] << " [options]\n"
                       << "Options:\n"
                       << "  --all, -a         Run all demos\n"
@@ -473,19 +519,22 @@ int main(int argc, char* argv[]) {
     }
 
     // Interactive menu
-    while (true) {
+    while (true)
+    {
         printMainMenu();
         std::cout << "Enter choice: ";
 
         int choice;
-        if (!(std::cin >> choice)) {
+        if (!(std::cin >> choice))
+        {
             std::cin.clear();
             std::cin.ignore(10000, '\n');
             continue;
         }
         std::cin.ignore(10000, '\n');
 
-        switch (choice) {
+        switch (choice)
+        {
             case 0:
                 std::cout << "Goodbye!\n";
                 return 0;
