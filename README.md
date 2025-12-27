@@ -151,9 +151,11 @@ using TrackingSubState = std::variant<Searching, Locked, Measuring>;
 ### 2. Event Dispatch with `std::visit`
 
 ```cpp
-bool processEvent(const Event& event) {
+bool processEvent(const Event& event)
+{
     return std::visit(
-        [this, &event](auto& state) -> bool {
+        [this, &event](auto& state) -> bool
+        {
             return this->handleEvent(state, event);
         },
         currentState_);
@@ -168,14 +170,17 @@ bool processEvent(const Event& event) {
 ### 3. State Entry/Exit Actions
 
 ```cpp
-struct Idle {
+struct Idle
+{
     static constexpr const char* name = "Idle";
 
-    void onEntry() const {
+    void onEntry() const
+    {
         std::cout << "  [ENTRY] Idle: Ready for operation\n";
     }
 
-    void onExit() const {
+    void onExit() const
+    {
         std::cout << "  [EXIT] Idle: Activating systems\n";
     }
 };
@@ -189,15 +194,18 @@ struct Idle {
 ### 4. Composite State Pattern
 
 ```cpp
-struct Tracking {
+struct Tracking
+{
     TrackingSubState subState;
 
-    void onEntry() const {
+    void onEntry() const
+    {
         std::cout << "  [ENTRY] Tracking\n";
         std::visit([](const auto& s) { s.onEntry(); }, subState);
     }
 
-    void onExit() const {
+    void onExit() const
+    {
         std::visit([](const auto& s) { s.onExit(); }, subState);
         std::cout << "  [EXIT] Tracking\n";
     }
@@ -212,7 +220,8 @@ struct Tracking {
 ### 5. constexpr Static Members
 
 ```cpp
-struct Searching {
+struct Searching
+{
     static constexpr const char* name = "Searching";
     // ...
 };
@@ -227,11 +236,15 @@ struct Searching {
 
 ```cpp
 return std::visit(
-    [](const auto& s) -> std::string {
+    [](const auto& s) -> std::string
+    {
         using T = std::decay_t<decltype(s)>;
-        if constexpr (std::is_same_v<T, Tracking>) {
+        if constexpr (std::is_same_v<T, Tracking>)
+        {
             return std::string(s.name) + "::" + s.getSubStateName();
-        } else {
+        }
+        else
+        {
             return s.name;
         }
     },
@@ -341,6 +354,7 @@ StateMachine/
 ├── LaserTrackerHSM.hpp   # HSM implementation (header-only)
 ├── main.cpp              # Demo application
 ├── .clang-format         # Code formatting configuration
+├── claude.md             # Claude Code guidelines
 └── README.md             # This file
 ```
 
