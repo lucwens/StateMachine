@@ -17,10 +17,16 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# Find threading library
+find_package(Threads REQUIRED)
+
 # Main executable
 add_executable(laser_tracker_hsm
     main.cpp
 )
+
+# Link threading library
+target_link_libraries(laser_tracker_hsm PRIVATE Threads::Threads)
 
 # Set output directory
 set_target_properties(laser_tracker_hsm PROPERTIES

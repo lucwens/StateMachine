@@ -56,7 +56,7 @@ namespace LaserTracker
     // Forward Declarations
     // ============================================================================
 
-    struct HSM;
+    class HSM;
 
     // ============================================================================
     // Events - All possible events that can trigger state transitions
