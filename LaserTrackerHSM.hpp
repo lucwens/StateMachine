@@ -491,7 +491,10 @@ namespace LaserTracker
                         transitionTo(States::Operational{});
                         return true;
                     }
-                    return false;
+                    else
+                    {
+                        return false;
+                    }
                 },
                 event);
         }
@@ -512,7 +515,10 @@ namespace LaserTracker
                         std::get<States::Off>(currentState_).onEntry();
                         return true;
                     }
-                    return false;
+                    else
+                    {
+                        return false;
+                    }
                 },
                 event);
 
@@ -542,7 +548,10 @@ namespace LaserTracker
                         transitionOperationalTo(parent, States::Error{-1, e.errorReason});
                         return true;
                     }
-                    return false;
+                    else
+                    {
+                        return false;
+                    }
                 },
                 event);
         }
@@ -565,7 +574,10 @@ namespace LaserTracker
                         transitionOperationalTo(parent, States::Error{e.errorCode, e.description});
                         return true;
                     }
-                    return false;
+                    else
+                    {
+                        return false;
+                    }
                 },
                 event);
         }
@@ -592,7 +604,10 @@ namespace LaserTracker
                         std::get<States::Error>(parent.subState).onEntry();
                         return true;
                     }
-                    return false;
+                    else
+                    {
+                        return false;
+                    }
                 },
                 event);
 
@@ -618,7 +633,10 @@ namespace LaserTracker
                         transitionOperationalTo(parent, States::Initializing{});
                         return true;
                     }
-                    return false;
+                    else
+                    {
+                        return false;
+                    }
                 },
                 event);
         }
@@ -636,7 +654,10 @@ namespace LaserTracker
                         transitionTrackingTo(tracking, States::Locked{e.distance_mm});
                         return true;
                     }
-                    return false;
+                    else
+                    {
+                        return false;
+                    }
                 },
                 event);
         }
@@ -659,7 +680,10 @@ namespace LaserTracker
                         transitionTrackingTo(tracking, States::Searching{});
                         return true;
                     }
-                    return false;
+                    else
+                    {
+                        return false;
+                    }
                 },
                 event);
         }
@@ -687,7 +711,10 @@ namespace LaserTracker
                         transitionTrackingTo(tracking, States::Searching{});
                         return true;
                     }
-                    return false;
+                    else
+                    {
+                        return false;
+                    }
                 },
                 event);
         }

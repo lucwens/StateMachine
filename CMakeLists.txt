@@ -12,6 +12,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Enable warnings
 if(MSVC)
+    # Remove default /W3 to avoid D9025 warning when adding /W4
+    string(REGEX REPLACE "/W[0-4]" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
     add_compile_options(/W4 /WX-)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
