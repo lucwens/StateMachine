@@ -30,6 +30,11 @@
 #pragma once
 
 #include "LaserTrackerHSM.hpp"
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -424,6 +429,12 @@ namespace LaserTracker
             }
 
             workerThread_ = std::thread(&ThreadedHSM::workerLoop, this);
+
+#ifdef _WIN32
+            // Set thread name for debugger visibility
+            SetThreadDescription(workerThread_.native_handle(), L"LaserTracker HSM Worker");
+#endif
+
             std::cout << "[ThreadedHSM] Worker thread started\n";
         }
 

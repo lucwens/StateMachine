@@ -42,9 +42,13 @@ target_link_libraries(laser_tracker_hsm PRIVATE
     nlohmann_json::nlohmann_json
 )
 
-# Set output directory
+# Set output directory (flatten config subdirectory for multi-config generators)
 set_target_properties(laser_tracker_hsm PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}/bin"
 )
 
 # Print configuration info
