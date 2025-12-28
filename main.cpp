@@ -405,13 +405,13 @@ void demoCommands()
     std::cout << "Home result: success=" << (homeResult.success ? "true" : "false") << "\n";
     if (homeResult.success)
     {
-        std::cout << "Response JSON: " << homeResult.params.toJson() << "\n";
+        std::cout << "Response JSON: " << homeResult.params.dump() << "\n";
     }
 
     // GetPosition command (async)
     std::cout << "\nSending GetPosition command...\n";
     auto posResult = tracker.sendCommand(Commands::GetPosition{});
-    std::cout << "Position result: " << posResult.params.toJson() << "\n";
+    std::cout << "Position result: " << posResult.params.dump() << "\n";
 
     // SetLaserPower command
     std::cout << "\nSending SetLaserPower command...\n";
@@ -427,12 +427,12 @@ void demoCommands()
     compCmd.pressure    = 1015.0;
     compCmd.humidity    = 45.0;
     auto compResult     = tracker.sendCommand(compCmd);
-    std::cout << "Compensate result: " << compResult.params.toJson() << "\n";
+    std::cout << "Compensate result: " << compResult.params.dump() << "\n";
 
     // GetStatus command
     std::cout << "\nSending GetStatus command...\n";
     auto statusResult = tracker.sendCommand(Commands::GetStatus{});
-    std::cout << "Status result: " << statusResult.params.toJson() << "\n";
+    std::cout << "Status result: " << statusResult.params.dump() << "\n";
 
     // Try Home in wrong state
     std::cout << "\n--- Testing Home in wrong state ---\n";
@@ -855,7 +855,7 @@ void runThreadedInteractiveMode()
             auto resp = tracker.sendCommand(homeCmd);
             if (resp.success)
             {
-                std::cout << "Home complete. Result: " << resp.params.toJson() << "\n";
+                std::cout << "Home complete. Result: " << resp.params.dump() << "\n";
             }
             else
             {
@@ -867,7 +867,7 @@ void runThreadedInteractiveMode()
             auto resp = tracker.sendCommand(Commands::GetPosition{});
             if (resp.success)
             {
-                std::cout << "Position: " << resp.params.toJson() << "\n";
+                std::cout << "Position: " << resp.params.dump() << "\n";
             }
             else
             {
@@ -902,7 +902,7 @@ void runThreadedInteractiveMode()
             auto resp = tracker.sendCommand(compCmd);
             if (resp.success)
             {
-                std::cout << "Compensation applied. Result: " << resp.params.toJson() << "\n";
+                std::cout << "Compensation applied. Result: " << resp.params.dump() << "\n";
             }
             else
             {
@@ -914,7 +914,7 @@ void runThreadedInteractiveMode()
             auto resp = tracker.sendCommand(Commands::GetStatus{});
             if (resp.success)
             {
-                std::cout << "Status: " << resp.params.toJson() << "\n";
+                std::cout << "Status: " << resp.params.dump() << "\n";
             }
             else
             {
@@ -932,7 +932,7 @@ void runThreadedInteractiveMode()
             auto resp = tracker.sendCommand(moveCmd);
             if (resp.success)
             {
-                std::cout << "Move complete. Result: " << resp.params.toJson() << "\n";
+                std::cout << "Move complete. Result: " << resp.params.dump() << "\n";
             }
             else
             {

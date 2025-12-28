@@ -451,13 +451,14 @@ StateMachine/
 
 1. **Header-Only Implementation**: Both `LaserTrackerHSM.hpp` and `ThreadedHSM.hpp` are header-only for easy integration
 2. **Value Semantics**: States are value types stored in variants, avoiding heap allocation
-3. **No External Dependencies**: Uses only C++ standard library (including `<thread>`, `<mutex>`, `<future>`)
+3. **Minimal Dependencies**: Uses C++ standard library plus [nlohmann/json](https://github.com/nlohmann/json) for JSON handling
 4. **Compile-Time Safety**: Type errors are caught at compile time, not runtime
 5. **Unified Messaging**: Events and commands use the same message infrastructure
-6. **Built-in JSON**: Simple JSON implementation without external library dependencies
+6. **Industry-Standard JSON**: Uses nlohmann/json for robust JSON parsing and serialization
 
 ## References
 
+- [nlohmann/json - GitHub](https://github.com/nlohmann/json)
 - [std::variant - cppreference](https://en.cppreference.com/w/cpp/utility/variant)
 - [std::visit - cppreference](https://en.cppreference.com/w/cpp/utility/variant/visit)
 - [Hierarchical State Machines](https://en.wikipedia.org/wiki/UML_state_machine#Hierarchically_nested_states)

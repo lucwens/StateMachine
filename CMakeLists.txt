@@ -20,13 +20,25 @@ endif()
 # Find threading library
 find_package(Threads REQUIRED)
 
+# Fetch nlohmann/json
+include(FetchContent)
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
 # Main executable
 add_executable(laser_tracker_hsm
     main.cpp
 )
 
-# Link threading library
-target_link_libraries(laser_tracker_hsm PRIVATE Threads::Threads)
+# Link libraries
+target_link_libraries(laser_tracker_hsm PRIVATE
+    Threads::Threads
+    nlohmann_json::nlohmann_json
+)
 
 # Set output directory
 set_target_properties(laser_tracker_hsm PROPERTIES

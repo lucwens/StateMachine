@@ -44,159 +44,12 @@
 #include <thread>
 #include <unordered_map>
 #include <variant>
+#include <nlohmann/json.hpp>
 
 namespace LaserTracker
 {
-    // ============================================================================
-    // JSON Message Types (Simple implementation without external dependencies)
-    // ============================================================================
-
-    /**
-     * @brief Simple JSON-like value representation
-     */
-    struct JsonValue
-    {
-        using Object = std::unordered_map<std::string, JsonValue>;
-        using Array  = std::vector<JsonValue>;
-        using Value  = std::variant<std::nullptr_t, bool, int, double, std::string, Array, Object>;
-
-        Value value;
-
-        JsonValue() : value(nullptr) {}
-        JsonValue(std::nullptr_t) : value(nullptr) {}
-        JsonValue(bool b) : value(b) {}
-        JsonValue(int i) : value(i) {}
-        JsonValue(double d) : value(d) {}
-        JsonValue(const char* s) : value(std::string(s)) {}
-        JsonValue(const std::string& s) : value(s) {}
-        JsonValue(std::string&& s) : value(std::move(s)) {}
-        JsonValue(Array arr) : value(std::move(arr)) {}
-        JsonValue(Object obj) : value(std::move(obj)) {}
-
-        bool isNull() const { return std::holds_alternative<std::nullptr_t>(value); }
-        bool isBool() const { return std::holds_alternative<bool>(value); }
-        bool isInt() const { return std::holds_alternative<int>(value); }
-        bool isDouble() const { return std::holds_alternative<double>(value); }
-        bool isString() const { return std::holds_alternative<std::string>(value); }
-        bool isArray() const { return std::holds_alternative<Array>(value); }
-        bool isObject() const { return std::holds_alternative<Object>(value); }
-
-        bool               asBool() const { return std::get<bool>(value); }
-        int                asInt() const { return std::get<int>(value); }
-        double             asDouble() const { return std::get<double>(value); }
-        const std::string& asString() const { return std::get<std::string>(value); }
-        const Array&       asArray() const { return std::get<Array>(value); }
-        const Object&      asObject() const { return std::get<Object>(value); }
-        Object&            asObject() { return std::get<Object>(value); }
-
-        JsonValue& operator[](const std::string& key)
-        {
-            if (!isObject())
-            {
-                value = Object{};
-            }
-            return std::get<Object>(value)[key];
-        }
-
-        const JsonValue& at(const std::string& key) const { return std::get<Object>(value).at(key); }
-
-        bool contains(const std::string& key) const
-        {
-            if (!isObject())
-                return false;
-            return std::get<Object>(value).count(key) > 0;
-        }
-
-        /**
-         * @brief Serialize to JSON string
-         */
-        std::string toJson() const
-        {
-            return std::visit(
-                [](const auto& v) -> std::string
-                {
-                    using T = std::decay_t<decltype(v)>;
-                    if constexpr (std::is_same_v<T, std::nullptr_t>)
-                    {
-                        return "null";
-                    }
-                    else if constexpr (std::is_same_v<T, bool>)
-                    {
-                        return v ? "true" : "false";
-                    }
-                    else if constexpr (std::is_same_v<T, int>)
-                    {
-                        return std::to_string(v);
-                    }
-                    else if constexpr (std::is_same_v<T, double>)
-                    {
-                        std::ostringstream oss;
-                        oss << std::fixed << std::setprecision(6) << v;
-                        return oss.str();
-                    }
-                    else if constexpr (std::is_same_v<T, std::string>)
-                    {
-                        return "\"" + escapeString(v) + "\"";
-                    }
-                    else if constexpr (std::is_same_v<T, Array>)
-                    {
-                        std::string result = "[";
-                        for (size_t i = 0; i < v.size(); ++i)
-                        {
-                            if (i > 0)
-                                result += ",";
-                            result += v[i].toJson();
-                        }
-                        return result + "]";
-                    }
-                    else if constexpr (std::is_same_v<T, Object>)
-                    {
-                        std::string result = "{";
-                        bool        first  = true;
-                        for (const auto& [key, val] : v)
-                        {
-                            if (!first)
-                                result += ",";
-                            first = false;
-                            result += "\"" + escapeString(key) + "\":" + val.toJson();
-                        }
-                        return result + "}";
-                    }
-                    return "null";
-                },
-                value);
-        }
-
-      private:
-        static std::string escapeString(const std::string& s)
-        {
-            std::string result;
-            for (char c : s)
-            {
-                switch (c)
-                {
-                    case '"':
-                        result += "\\\"";
-                        break;
-                    case '\\':
-                        result += "\\\\";
-                        break;
-                    case '\n':
-                        result += "\\n";
-                        break;
-                    case '\r':
-                        result += "\\r";
-                        break;
-                    case '\t':
-                        result += "\\t";
-                        break;
-                    default:
-                        result += c;
-                }
-            }
-            return result;
-        }
-    };
+    // JSON type alias (using nlohmann/json)
+    using Json = nlohmann::json;
 
     // ============================================================================
     // Unified Message Type
@@ -228,7 +81,7 @@ namespace LaserTracker
 
         uint64_t    id = 0;            // Unique identifier for correlation
         std::string name;              // Name of event/command
-        JsonValue   params;            // Parameters (request) or result data (response)
+        Json        params;            // Parameters (request) or result data (response)
         bool        sync       = false; // If true, sender waits for completion
         bool        needsReply = false; // If true, a response is expected
         uint32_t    timeoutMs  = 5000;  // Timeout in ms for reply (0 = no timeout)
@@ -275,7 +128,7 @@ namespace LaserTracker
         /**
          * @brief Create a response from a request
          */
-        static Message createResponse(uint64_t requestId, bool success, JsonValue result = {}, const std::string& error = "")
+        static Message createResponse(uint64_t requestId, bool success, Json result = {}, const std::string& error = "")
         {
             Message resp;
             resp.id         = requestId;
@@ -296,10 +149,10 @@ namespace LaserTracker
 
         std::string toJson() const
         {
-            JsonValue obj = JsonValue::Object{};
-            obj["id"]   = static_cast<int>(id);
-            obj["name"] = name;
-            obj["timestamp_ms"] = static_cast<int>(ageMs()); // Age since creation
+            Json obj;
+            obj["id"]           = id;
+            obj["name"]         = name;
+            obj["timestamp_ms"] = ageMs();
 
             if (isResponse)
             {
@@ -315,9 +168,9 @@ namespace LaserTracker
             {
                 obj["params"]    = params;
                 obj["sync"]      = sync;
-                obj["timeoutMs"] = static_cast<int>(timeoutMs);
+                obj["timeoutMs"] = timeoutMs;
             }
-            return obj.toJson();
+            return obj.dump();
         }
     };
 
@@ -605,7 +458,7 @@ namespace LaserTracker
          * @brief Send a message asynchronously (fire and forget)
          * @return Message ID for tracking
          */
-        uint64_t sendAsync(const std::string& name, JsonValue params = {}, bool sync = false)
+        uint64_t sendAsync(const std::string& name, Json params = {}, bool sync = false)
         {
             Message msg;
             msg.id         = nextMessageId_++;
@@ -627,7 +480,7 @@ namespace LaserTracker
          * @param timeoutMs Timeout in milliseconds (0 = no timeout)
          * @return Response message
          */
-        Message send(const std::string& name, JsonValue params = {}, bool sync = false, uint32_t timeoutMs = 30000)
+        Message send(const std::string& name, Json params = {}, bool sync = false, uint32_t timeoutMs = 30000)
         {
             Message msg;
             msg.id         = nextMessageId_++;
@@ -909,9 +762,9 @@ namespace LaserTracker
                 handled = hsm_.processEvent(event);
             }
 
-            JsonValue result    = JsonValue::Object{};
-            result["handled"]   = handled;
-            result["state"]     = getCurrentStateName();
+            Json result;
+            result["handled"]      = handled;
+            result["state"]        = getCurrentStateName();
             result["stateChanged"] = handled;
 
             if (!handled)
@@ -977,7 +830,7 @@ namespace LaserTracker
             double speed = 100.0;
             if (msg.params.contains("speed"))
             {
-                speed = msg.params.at("speed").asDouble();
+                speed = msg.params.at("speed").get<double>();
             }
 
             std::cout << "  [COMMAND] Home: Moving to home position at " << speed << "% speed\n";
@@ -987,8 +840,7 @@ namespace LaserTracker
 
             std::cout << "  [COMMAND] Home: Homing complete\n";
 
-            JsonValue result    = JsonValue::Object{};
-            result["position"]  = JsonValue::Object{};
+            Json result;
             result["position"]["azimuth"]   = 0.0;
             result["position"]["elevation"] = 0.0;
             result["state"] = getCurrentStateName();
@@ -1006,11 +858,10 @@ namespace LaserTracker
             }
 
             // Simulate reading position
-            JsonValue result    = JsonValue::Object{};
-            result["position"]  = JsonValue::Object{};
-            result["position"]["x"] = 1234.567;
-            result["position"]["y"] = 2345.678;
-            result["position"]["z"] = 345.789;
+            Json result;
+            result["position"]["x"]         = 1234.567;
+            result["position"]["y"]         = 2345.678;
+            result["position"]["z"]         = 345.789;
             result["position"]["azimuth"]   = 45.123;
             result["position"]["elevation"] = 12.456;
 
@@ -1030,7 +881,7 @@ namespace LaserTracker
             double power = 1.0;
             if (msg.params.contains("powerLevel"))
             {
-                power = msg.params.at("powerLevel").asDouble();
+                power = msg.params.at("powerLevel").get<double>();
             }
 
             if (power < 0.0 || power > 1.0)
@@ -1040,7 +891,7 @@ namespace LaserTracker
 
             std::cout << "  [COMMAND] SetLaserPower: Set to " << (power * 100) << "%\n";
 
-            JsonValue result     = JsonValue::Object{};
+            Json result;
             result["powerLevel"] = power;
 
             return Message::createResponse(msg.id, true, result);
@@ -1059,11 +910,11 @@ namespace LaserTracker
             double humidity = 50.0;
 
             if (msg.params.contains("temperature"))
-                temp = msg.params.at("temperature").asDouble();
+                temp = msg.params.at("temperature").get<double>();
             if (msg.params.contains("pressure"))
-                pressure = msg.params.at("pressure").asDouble();
+                pressure = msg.params.at("pressure").get<double>();
             if (msg.params.contains("humidity"))
-                humidity = msg.params.at("humidity").asDouble();
+                humidity = msg.params.at("humidity").get<double>();
 
             std::cout << "  [COMMAND] Compensate: Applying environmental compensation\n";
             std::cout << "            T=" << temp << "C, P=" << pressure << "hPa, H=" << humidity << "%\n";
@@ -1076,7 +927,7 @@ namespace LaserTracker
 
             std::cout << "  [COMMAND] Compensate: Factor = " << std::fixed << std::setprecision(8) << factor << "\n";
 
-            JsonValue result             = JsonValue::Object{};
+            Json result;
             result["compensationFactor"] = factor;
             result["applied"]            = true;
 
@@ -1085,10 +936,10 @@ namespace LaserTracker
 
         Message executeGetStatus(const Message& msg, const std::string& currentState)
         {
-            JsonValue result    = JsonValue::Object{};
-            result["state"]     = currentState;
-            result["healthy"]   = (currentState.find("Error") == std::string::npos);
-            result["powered"]   = (currentState.find("Off") == std::string::npos);
+            Json result;
+            result["state"]   = currentState;
+            result["healthy"] = (currentState.find("Error") == std::string::npos);
+            result["powered"] = (currentState.find("Off") == std::string::npos);
 
             std::cout << "  [COMMAND] GetStatus: State=" << currentState << "\n";
 
@@ -1107,9 +958,9 @@ namespace LaserTracker
             double elevation = 0.0;
 
             if (msg.params.contains("azimuth"))
-                azimuth = msg.params.at("azimuth").asDouble();
+                azimuth = msg.params.at("azimuth").get<double>();
             if (msg.params.contains("elevation"))
-                elevation = msg.params.at("elevation").asDouble();
+                elevation = msg.params.at("elevation").get<double>();
 
             std::cout << "  [COMMAND] MoveRelative: Moving by az=" << azimuth << ", el=" << elevation << "\n";
 
@@ -1119,10 +970,10 @@ namespace LaserTracker
 
             std::cout << "  [COMMAND] MoveRelative: Move complete\n";
 
-            JsonValue result      = JsonValue::Object{};
-            result["movedAz"]     = azimuth;
-            result["movedEl"]     = elevation;
-            result["moveTimeMs"]  = static_cast<int>(moveTime);
+            Json result;
+            result["movedAz"]    = azimuth;
+            result["movedEl"]    = elevation;
+            result["moveTimeMs"] = static_cast<int>(moveTime);
 
             return Message::createResponse(msg.id, true, result);
         }
@@ -1200,13 +1051,13 @@ namespace LaserTracker
             return std::visit([](const auto& c) { return c.sync; }, cmd);
         }
 
-        static JsonValue eventToParams(const Event& event)
+        static Json eventToParams(const Event& event)
         {
             return std::visit(
-                [](const auto& e) -> JsonValue
+                [](const auto& e) -> Json
                 {
                     using E = std::decay_t<decltype(e)>;
-                    JsonValue params = JsonValue::Object{};
+                    Json params = Json::object();
 
                     if constexpr (std::is_same_v<E, Events::TargetFound>)
                     {
@@ -1233,13 +1084,13 @@ namespace LaserTracker
                 event);
         }
 
-        static JsonValue commandToParams(const Command& cmd)
+        static Json commandToParams(const Command& cmd)
         {
             return std::visit(
-                [](const auto& c) -> JsonValue
+                [](const auto& c) -> Json
                 {
                     using C = std::decay_t<decltype(c)>;
-                    JsonValue params = JsonValue::Object{};
+                    Json params = Json::object();
 
                     if constexpr (std::is_same_v<C, Commands::Home>)
                     {
@@ -1266,7 +1117,7 @@ namespace LaserTracker
                 cmd);
         }
 
-        static std::optional<Event> paramsToEvent(const std::string& name, const JsonValue& params)
+        static std::optional<Event> paramsToEvent(const std::string& name, const Json& params)
         {
             if (name == "PowerOn" || name.find("PowerOn") != std::string::npos)
             {
@@ -1285,7 +1136,7 @@ namespace LaserTracker
                 Events::InitFailed e;
                 if (params.contains("errorReason"))
                 {
-                    e.errorReason = params.at("errorReason").asString();
+                    e.errorReason = params.at("errorReason").get<std::string>();
                 }
                 return e;
             }
@@ -1298,7 +1149,7 @@ namespace LaserTracker
                 Events::TargetFound e;
                 if (params.contains("distance_mm"))
                 {
-                    e.distance_mm = params.at("distance_mm").asDouble();
+                    e.distance_mm = params.at("distance_mm").get<double>();
                 }
                 return e;
             }
@@ -1318,20 +1169,20 @@ namespace LaserTracker
             {
                 Events::MeasurementComplete e;
                 if (params.contains("x"))
-                    e.x = params.at("x").asDouble();
+                    e.x = params.at("x").get<double>();
                 if (params.contains("y"))
-                    e.y = params.at("y").asDouble();
+                    e.y = params.at("y").get<double>();
                 if (params.contains("z"))
-                    e.z = params.at("z").asDouble();
+                    e.z = params.at("z").get<double>();
                 return e;
             }
             else if (name == "ErrorOccurred" || name.find("Error") != std::string::npos)
             {
                 Events::ErrorOccurred e;
                 if (params.contains("errorCode"))
-                    e.errorCode = params.at("errorCode").asInt();
+                    e.errorCode = params.at("errorCode").get<int>();
                 if (params.contains("description"))
-                    e.description = params.at("description").asString();
+                    e.description = params.at("description").get<std::string>();
                 return e;
             }
             else if (name == "Reset" || name.find("Reset") != std::string::npos)
@@ -1346,92 +1197,51 @@ namespace LaserTracker
             return std::nullopt;
         }
 
-        static Message parseJsonMessage(const std::string& json)
+        static Message parseJsonMessage(const std::string& jsonStr)
         {
-            // Simple JSON parsing (in production, use a proper JSON library)
             Message msg;
 
-            // Helper to extract integer value
-            auto extractInt = [&json](const std::string& key) -> std::optional<int64_t>
+            try
             {
-                auto pos = json.find("\"" + key + "\"");
-                if (pos == std::string::npos)
-                    return std::nullopt;
-                auto colonPos = json.find(":", pos);
-                auto endPos   = json.find_first_of(",}", colonPos);
-                if (colonPos == std::string::npos || endPos == std::string::npos)
-                    return std::nullopt;
-                std::string valStr = json.substr(colonPos + 1, endPos - colonPos - 1);
-                valStr.erase(0, valStr.find_first_not_of(" \t\n\r"));
-                valStr.erase(valStr.find_last_not_of(" \t\n\r") + 1);
-                try
+                Json json = Json::parse(jsonStr);
+
+                if (json.contains("id") && json["id"].is_number())
                 {
-                    return std::stoll(valStr);
+                    msg.id = json["id"].get<uint64_t>();
                 }
-                catch (...)
+
+                if (json.contains("name") && json["name"].is_string())
                 {
-                    return std::nullopt;
+                    msg.name = json["name"].get<std::string>();
                 }
-            };
 
-            // Helper to extract bool value
-            auto extractBool = [&json](const std::string& key) -> std::optional<bool>
-            {
-                auto pos = json.find("\"" + key + "\"");
-                if (pos == std::string::npos)
-                    return std::nullopt;
-                auto colonPos = json.find(":", pos);
-                if (colonPos == std::string::npos)
-                    return std::nullopt;
-                // Look for true/false after the colon
-                auto truePos  = json.find("true", colonPos);
-                auto falsePos = json.find("false", colonPos);
-                auto nextKey  = json.find("\"", colonPos + 1);
-                if (truePos != std::string::npos && (nextKey == std::string::npos || truePos < nextKey))
-                    return true;
-                if (falsePos != std::string::npos && (nextKey == std::string::npos || falsePos < nextKey))
-                    return false;
-                return std::nullopt;
-            };
-
-            // Extract id
-            if (auto id = extractInt("id"))
-            {
-                msg.id = static_cast<uint64_t>(*id);
-            }
-
-            // Extract name
-            auto namePos = json.find("\"name\"");
-            if (namePos != std::string::npos)
-            {
-                auto quoteStart = json.find("\"", namePos + 6);
-                auto quoteEnd   = json.find("\"", quoteStart + 1);
-                if (quoteStart != std::string::npos && quoteEnd != std::string::npos)
+                if (json.contains("params"))
                 {
-                    msg.name = json.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
+                    msg.params = json["params"];
+                }
+
+                if (json.contains("sync") && json["sync"].is_boolean())
+                {
+                    msg.sync = json["sync"].get<bool>();
+                }
+
+                if (json.contains("needsReply") && json["needsReply"].is_boolean())
+                {
+                    msg.needsReply = json["needsReply"].get<bool>();
+                }
+                else
+                {
+                    msg.needsReply = msg.sync;
+                }
+
+                if (json.contains("timeoutMs") && json["timeoutMs"].is_number())
+                {
+                    msg.timeoutMs = json["timeoutMs"].get<uint32_t>();
                 }
             }
-
-            // Extract sync
-            if (auto sync = extractBool("sync"))
+            catch (const Json::parse_error& e)
             {
-                msg.sync = *sync;
-            }
-
-            // Extract needsReply (default to sync value if not specified)
-            if (auto needsReply = extractBool("needsReply"))
-            {
-                msg.needsReply = *needsReply;
-            }
-            else
-            {
-                msg.needsReply = msg.sync;
-            }
-
-            // Extract timeoutMs
-            if (auto timeout = extractInt("timeoutMs"))
-            {
-                msg.timeoutMs = static_cast<uint32_t>(*timeout);
+                std::cerr << "[parseJsonMessage] Parse error: " << e.what() << "\n";
             }
 
             return msg;
