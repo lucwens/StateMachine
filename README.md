@@ -1,6 +1,6 @@
 # Laser Tracker HSM - Hierarchical State Machine Demo
 
-A C++17 implementation demonstrating the **Hierarchical State Machine (HSM)** pattern using `std::variant` for type-safe state representation.
+A C++17 implementation demonstrating the **Hierarchical State Machine (HSM)** pattern using `std::variant` for type-safe state representation. Includes a **threaded HSM** with JSON messaging protocol, commands, and timeout support.
 
 ## Overview
 
@@ -11,6 +11,10 @@ This project showcases modern C++ patterns for implementing complex state machin
 - **State entry/exit actions** for resource management
 - **Composite states** containing sub-states
 - **Event-driven transitions** with proper action handling
+- **Threaded HSM** running in a dedicated thread
+- **Commands** (non-state-changing actions with state restrictions)
+- **JSON message protocol** for inter-thread communication
+- **Synchronous/asynchronous execution** with timeout support
 
 ## State Hierarchy
 
@@ -128,6 +132,81 @@ classDiagram
     Operational --> OperationalSubState
     OperationalSubState --> Tracking
     Tracking --> TrackingSubState
+```
+
+## Threaded HSM
+
+The `ThreadedHSM` class extends the basic HSM with multi-threading support:
+
+### Features
+
+- **Dedicated Worker Thread**: HSM runs in its own thread, processing messages from a queue
+- **Thread-Safe State Access**: Query state safely from any thread
+- **Message-Based Communication**: Events and commands sent via thread-safe queue
+- **Synchronous & Asynchronous**: Choose blocking or fire-and-forget message sending
+- **Timeout Support**: Configurable timeouts prevent indefinite blocking
+- **Command Buffering**: Messages queued during sync operations
+
+### Commands
+
+Commands are actions that don't change state but are restricted to specific states:
+
+| Command | Valid States | Sync | Description |
+|---------|--------------|------|-------------|
+| `Home` | Idle | Yes | Move to home position |
+| `GetPosition` | Idle, Locked, Measuring | No | Get current position |
+| `SetLaserPower` | Any Operational | No | Adjust laser power (0.0-1.0) |
+| `Compensate` | Idle, Locked | Yes | Apply environmental compensation |
+| `GetStatus` | Any | No | Get system status |
+| `MoveRelative` | Idle, Locked | Yes | Relative movement by azimuth/elevation |
+
+### JSON Message Protocol
+
+Messages use a unified JSON format for both requests and responses:
+
+**Request Format:**
+```json
+{
+  "id": 1,
+  "name": "Home",
+  "params": { "speed": 100.0 },
+  "sync": true,
+  "timeoutMs": 5000
+}
+```
+
+**Response Format:**
+```json
+{
+  "id": 1,
+  "success": true,
+  "result": { "position": { "azimuth": 0.0, "elevation": 0.0 } },
+  "error": null
+}
+```
+
+### Usage Example
+
+```cpp
+#include "ThreadedHSM.hpp"
+
+LaserTracker::ThreadedHSM tracker;
+tracker.start();
+
+// Send async event (fire and forget)
+tracker.sendEventAsync(Events::PowerOn{});
+
+// Send sync event and wait for response
+auto response = tracker.sendEventSync(Events::InitComplete{});
+
+// Send command and get result
+auto result = tracker.sendCommand(Commands::Home{50.0});
+if (result.success)
+{
+    std::cout << "Home complete: " << result.params.toJson() << "\n";
+}
+
+tracker.stop();
 ```
 
 ## C++ Programming Patterns Used
@@ -282,7 +361,7 @@ cmake --build .
 ### Alternative: Direct Compilation
 
 ```bash
-g++ -std=c++17 -o laser_tracker_hsm main.cpp
+g++ -std=c++17 -pthread -o laser_tracker_hsm main.cpp
 ```
 
 ## Usage
@@ -319,12 +398,21 @@ g++ -std=c++17 -o laser_tracker_hsm main.cpp
 
 ### Demo Scenarios
 
+**Basic HSM Demos (1-6):**
 1. **Normal Operation Flow** - Happy-path workflow from power-on through measurement
 2. **Error Handling and Recovery** - Initialization failures and error recovery
 3. **Target Loss and Reacquisition** - Handling target loss during tracking
 4. **Invalid Event Handling** - Demonstrating ignored events in wrong states
 5. **State Inspection API** - Querying state machine state
 6. **Comprehensive Stress Test** - Multiple complete cycles
+
+**Threaded HSM Demos (7-12):**
+7. **Threaded HSM Basic Operation** - Async/sync event sending
+8. **Commands with State Restrictions** - Command validation and execution
+9. **Synchronous Command Buffering** - Message queuing during sync operations
+10. **JSON Message Protocol** - Raw JSON message handling
+11. **Message Timeout Handling** - Timeout behavior demonstration
+12. **Mixed Events and Commands** - Complex multi-threaded scenarios
 
 ## State Transition Table
 
@@ -351,7 +439,8 @@ g++ -std=c++17 -o laser_tracker_hsm main.cpp
 ```
 StateMachine/
 ├── CMakeLists.txt        # CMake build configuration
-├── LaserTrackerHSM.hpp   # HSM implementation (header-only)
+├── LaserTrackerHSM.hpp   # Core HSM implementation (header-only)
+├── ThreadedHSM.hpp       # Threaded HSM with commands & JSON messaging
 ├── main.cpp              # Demo application
 ├── .clang-format         # Code formatting configuration
 ├── claude.md             # Claude Code guidelines
@@ -360,10 +449,12 @@ StateMachine/
 
 ## Key Design Decisions
 
-1. **Header-Only HSM**: The entire state machine is in `LaserTrackerHSM.hpp` for easy integration
+1. **Header-Only Implementation**: Both `LaserTrackerHSM.hpp` and `ThreadedHSM.hpp` are header-only for easy integration
 2. **Value Semantics**: States are value types stored in variants, avoiding heap allocation
-3. **No External Dependencies**: Uses only C++ standard library
+3. **No External Dependencies**: Uses only C++ standard library (including `<thread>`, `<mutex>`, `<future>`)
 4. **Compile-Time Safety**: Type errors are caught at compile time, not runtime
+5. **Unified Messaging**: Events and commands use the same message infrastructure
+6. **Built-in JSON**: Simple JSON implementation without external library dependencies
 
 ## References
 
