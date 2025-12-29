@@ -390,6 +390,76 @@ return std::visit(
 - No runtime branching overhead
 - Type-specific code paths
 
+### 7. nlohmann/json ADL Serialization
+
+Each Event and Command has `to_json`/`from_json` friend functions for automatic JSON conversion:
+
+```cpp
+struct TargetFound
+{
+    static constexpr const char* name = "TargetFound";
+    double distance_mm = 0.0;
+
+    friend void to_json(nlohmann::json& j, const TargetFound& e)
+    {
+        j = nlohmann::json{{"distance_mm", e.distance_mm}};
+    }
+
+    friend void from_json(const nlohmann::json& j, TargetFound& e)
+    {
+        if (j.contains("distance_mm"))
+            j.at("distance_mm").get_to(e.distance_mm);
+    }
+};
+```
+
+**Benefits:**
+- Automatic serialization via ADL (Argument-Dependent Lookup)
+- Type-safe JSON conversion
+- Consistent with nlohmann/json conventions
+
+### 8. Compile-Time Type Registry with Fold Expressions
+
+The `MessageRegistry` template maps JSON message names to C++ types at compile time:
+
+```cpp
+template <typename... Types>
+struct MessageRegistry
+{
+    using Variant = std::variant<Types...>;
+
+    // JSON name → variant: uses fold expression to find matching type
+    static std::optional<Variant> fromJson(const std::string& name, const Json& params)
+    {
+        std::optional<Variant> result;
+        (tryParseType<Types>(name, params, result) || ...);  // Fold expression
+        return result;
+    }
+
+    // variant → JSON: uses std::visit with to_json ADL
+    static Json toJson(const Variant& msg)
+    {
+        return std::visit([](const auto& m) -> Json { return m; }, msg);
+    }
+
+    // Get static name from variant
+    static std::string getName(const Variant& msg)
+    {
+        return std::visit([](const auto& m) -> std::string { return m.name; }, msg);
+    }
+};
+
+// Two registries: all messages vs state-changing only
+using StateMessageRegistry = MessageRegistry<Events::..., Commands::...>;
+using StateChangingMessageRegistry = MessageRegistry<Events::..., /* no action commands */>;
+```
+
+**Benefits:**
+- No manual if-else chains for JSON parsing
+- Adding new message types is automatic (just include in variant)
+- Compile-time type safety with runtime name lookup
+- `std::visit` handles dispatch after variant construction
+
 ## Building the Project
 
 ### Requirements
@@ -525,6 +595,8 @@ StateMachine/
 7. **Flat Variant Design**: Single `StateMessage` variant contains all types directly - no nested variants, no if/else dispatch
 8. **Uniform API**: `sendMessage()` works for both Events and Commands - namespace distinction provides semantics, processing is uniform
 9. **Industry-Standard JSON**: Uses nlohmann/json for robust JSON parsing and serialization
+10. **Type Registry Pattern**: `MessageRegistry` template eliminates manual if-else chains for JSON↔variant conversion using fold expressions
+11. **ADL Serialization**: Each message type has `to_json`/`from_json` friend functions for automatic nlohmann/json integration
 
 ## References
 

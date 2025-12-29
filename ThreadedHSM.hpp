@@ -105,47 +105,98 @@ namespace LaserTracker
         /** @brief Initialization completed successfully */
         struct InitComplete
         {
-            std::string operator()() const { return "InitComplete"; }
+            static constexpr const char* name = "InitComplete";
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const InitComplete&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, InitComplete&) {}
         };
+
         /** @brief Initialization failed with error */
         struct InitFailed
         {
-            std::string errorReason;
-            std::string operator()() const { return "InitFailed: " + errorReason; }
+            static constexpr const char* name = "InitFailed";
+            std::string                  errorReason;
+            std::string                  operator()() const { return std::string(name) + ": " + errorReason; }
+
+            friend void to_json(nlohmann::json& j, const InitFailed& e) { j = nlohmann::json{{"errorReason", e.errorReason}}; }
+            friend void from_json(const nlohmann::json& j, InitFailed& e)
+            {
+                if (j.contains("errorReason"))
+                    j.at("errorReason").get_to(e.errorReason);
+            }
         };
+
         /** @brief Target retroreflector was found */
         struct TargetFound
         {
-            double      distance_mm;
-            std::string operator()() const
+            static constexpr const char* name = "TargetFound";
+            double                       distance_mm = 0.0;
+            std::string                  operator()() const
             {
                 std::ostringstream oss;
-                oss << "TargetFound at " << std::fixed << std::setprecision(3) << distance_mm << " mm";
+                oss << name << " at " << std::fixed << std::setprecision(3) << distance_mm << " mm";
                 return oss.str();
             }
+
+            friend void to_json(nlohmann::json& j, const TargetFound& e) { j = nlohmann::json{{"distance_mm", e.distance_mm}}; }
+            friend void from_json(const nlohmann::json& j, TargetFound& e)
+            {
+                if (j.contains("distance_mm"))
+                    j.at("distance_mm").get_to(e.distance_mm);
+            }
         };
+
         /** @brief Target was lost during tracking */
         struct TargetLost
         {
-            std::string operator()() const { return "TargetLost"; }
+            static constexpr const char* name = "TargetLost";
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const TargetLost&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, TargetLost&) {}
         };
+
         /** @brief A measurement point was recorded */
         struct MeasurementComplete
         {
-            double      x, y, z;
-            std::string operator()() const
+            static constexpr const char* name = "MeasurementComplete";
+            double                       x = 0.0, y = 0.0, z = 0.0;
+            std::string                  operator()() const
             {
                 std::ostringstream oss;
-                oss << "MeasurementComplete: (" << std::fixed << std::setprecision(6) << x << ", " << y << ", " << z << ")";
+                oss << name << ": (" << std::fixed << std::setprecision(6) << x << ", " << y << ", " << z << ")";
                 return oss.str();
             }
+
+            friend void to_json(nlohmann::json& j, const MeasurementComplete& e) { j = nlohmann::json{{"x", e.x}, {"y", e.y}, {"z", e.z}}; }
+            friend void from_json(const nlohmann::json& j, MeasurementComplete& e)
+            {
+                if (j.contains("x"))
+                    j.at("x").get_to(e.x);
+                if (j.contains("y"))
+                    j.at("y").get_to(e.y);
+                if (j.contains("z"))
+                    j.at("z").get_to(e.z);
+            }
         };
+
         /** @brief An error occurred in the system */
         struct ErrorOccurred
         {
-            int         errorCode;
-            std::string description;
-            std::string operator()() const { return "Error[" + std::to_string(errorCode) + "]: " + description; }
+            static constexpr const char* name = "ErrorOccurred";
+            int                          errorCode = 0;
+            std::string                  description;
+            std::string                  operator()() const { return "Error[" + std::to_string(errorCode) + "]: " + description; }
+
+            friend void to_json(nlohmann::json& j, const ErrorOccurred& e) { j = nlohmann::json{{"errorCode", e.errorCode}, {"description", e.description}}; }
+            friend void from_json(const nlohmann::json& j, ErrorOccurred& e)
+            {
+                if (j.contains("errorCode"))
+                    j.at("errorCode").get_to(e.errorCode);
+                if (j.contains("description"))
+                    j.at("description").get_to(e.description);
+            }
         };
     } // namespace Events
 
@@ -164,42 +215,69 @@ namespace LaserTracker
         {
             static constexpr const char* name = "PowerOn";
             std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const PowerOn&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, PowerOn&) {}
         };
+
         /** @brief Turn off the laser tracker power */
         struct PowerOff
         {
             static constexpr const char* name = "PowerOff";
             std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const PowerOff&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, PowerOff&) {}
         };
+
         /** @brief Start searching for target */
         struct StartSearch
         {
             static constexpr const char* name = "StartSearch";
             std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const StartSearch&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, StartSearch&) {}
         };
+
         /** @brief Start precision measurement */
         struct StartMeasure
         {
             static constexpr const char* name = "StartMeasure";
             std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const StartMeasure&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, StartMeasure&) {}
         };
+
         /** @brief Stop measurement and return to locked */
         struct StopMeasure
         {
             static constexpr const char* name = "StopMeasure";
             std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const StopMeasure&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, StopMeasure&) {}
         };
+
         /** @brief Reset the system from error state */
         struct Reset
         {
             static constexpr const char* name = "Reset";
             std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const Reset&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, Reset&) {}
         };
+
         /** @brief Return from tracking to idle state */
         struct ReturnToIdle
         {
             static constexpr const char* name = "ReturnToIdle";
             std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const ReturnToIdle&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, ReturnToIdle&) {}
         };
 
         // --------------------------------------------------------------------
@@ -213,14 +291,26 @@ namespace LaserTracker
             static constexpr bool        sync = true;
             double                       speed = 100.0;
             std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const Home& c) { j = nlohmann::json{{"speed", c.speed}}; }
+            friend void from_json(const nlohmann::json& j, Home& c)
+            {
+                if (j.contains("speed"))
+                    j.at("speed").get_to(c.speed);
+            }
         };
+
         /** @brief GetPosition - retrieves current position. Valid in: Idle, Locked, Measuring. Sync: No */
         struct GetPosition
         {
             static constexpr const char* name = "GetPosition";
             static constexpr bool        sync = false;
             std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const GetPosition&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, GetPosition&) {}
         };
+
         /** @brief SetLaserPower - adjusts laser power. Valid in: Any Operational. Sync: No */
         struct SetLaserPower
         {
@@ -228,7 +318,15 @@ namespace LaserTracker
             static constexpr bool        sync = false;
             double                       powerLevel = 1.0;
             std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const SetLaserPower& c) { j = nlohmann::json{{"powerLevel", c.powerLevel}}; }
+            friend void from_json(const nlohmann::json& j, SetLaserPower& c)
+            {
+                if (j.contains("powerLevel"))
+                    j.at("powerLevel").get_to(c.powerLevel);
+            }
         };
+
         /** @brief Compensate - applies environmental compensation. Valid in: Idle, Locked. Sync: Yes */
         struct Compensate
         {
@@ -238,14 +336,33 @@ namespace LaserTracker
             double                       pressure    = 1013.25;
             double                       humidity    = 50.0;
             std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const Compensate& c)
+            {
+                j = nlohmann::json{{"temperature", c.temperature}, {"pressure", c.pressure}, {"humidity", c.humidity}};
+            }
+            friend void from_json(const nlohmann::json& j, Compensate& c)
+            {
+                if (j.contains("temperature"))
+                    j.at("temperature").get_to(c.temperature);
+                if (j.contains("pressure"))
+                    j.at("pressure").get_to(c.pressure);
+                if (j.contains("humidity"))
+                    j.at("humidity").get_to(c.humidity);
+            }
         };
+
         /** @brief GetStatus - retrieves system status. Valid in: Any. Sync: No */
         struct GetStatus
         {
             static constexpr const char* name = "GetStatus";
             static constexpr bool        sync = false;
             std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const GetStatus&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, GetStatus&) {}
         };
+
         /** @brief MoveRelative - moves tracker by relative amount. Valid in: Idle, Locked. Sync: Yes */
         struct MoveRelative
         {
@@ -254,6 +371,15 @@ namespace LaserTracker
             double                       azimuth   = 0.0;
             double                       elevation = 0.0;
             std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const MoveRelative& c) { j = nlohmann::json{{"azimuth", c.azimuth}, {"elevation", c.elevation}}; }
+            friend void from_json(const nlohmann::json& j, MoveRelative& c)
+            {
+                if (j.contains("azimuth"))
+                    j.at("azimuth").get_to(c.azimuth);
+                if (j.contains("elevation"))
+                    j.at("elevation").get_to(c.elevation);
+            }
         };
     } // namespace Commands
 
@@ -276,6 +402,140 @@ namespace LaserTracker
     {
         return std::visit([](const auto& m) { return m(); }, msg);
     }
+
+    // ============================================================================
+    // MessageRegistry - Compile-time type registry for JSON serialization
+    // ============================================================================
+
+    /**
+     * @brief Registry for mapping message names to types and handling JSON conversion
+     *
+     * This template uses fold expressions to iterate over all types in the StateMessage
+     * variant at compile time, providing:
+     * - fromJson(): Convert JSON name + params to StateMessage variant
+     * - toJson(): Convert StateMessage variant to JSON
+     *
+     * The registry eliminates the need for manual if-else chains by using
+     * the static `name` member of each type for lookup.
+     */
+    template <typename... Types>
+    struct MessageRegistry
+    {
+        using Variant = std::variant<Types...>;
+
+        /**
+         * @brief Convert JSON name and params to a StateMessage variant
+         * @param name The message type name (e.g., "PowerOn", "TargetFound")
+         * @param params The JSON parameters for the message
+         * @return Optional containing the StateMessage if name matches, nullopt otherwise
+         */
+        static std::optional<Variant> fromJson(const std::string& name, const nlohmann::json& params)
+        {
+            std::optional<Variant> result;
+            // Fold expression: try each type until one matches
+            (tryParseType<Types>(name, params, result) || ...);
+            return result;
+        }
+
+        /**
+         * @brief Convert a StateMessage variant to JSON params
+         * @param msg The StateMessage to convert
+         * @return JSON object containing the message parameters
+         */
+        static nlohmann::json toJson(const Variant& msg)
+        {
+            return std::visit([](const auto& m) -> nlohmann::json { return m; }, msg);
+        }
+
+        /**
+         * @brief Get the name of a message type from the variant
+         * @param msg The StateMessage variant
+         * @return The static name of the contained type
+         */
+        static std::string getName(const Variant& msg)
+        {
+            return std::visit([](const auto& m) -> std::string { return m.name; }, msg);
+        }
+
+        /**
+         * @brief Check if a message type requires synchronous execution
+         * @param msg The StateMessage variant
+         * @return true if the message has sync=true, false otherwise
+         */
+        static bool isSync(const Variant& msg)
+        {
+            return std::visit(
+                [](const auto& m) -> bool
+                {
+                    using M = std::decay_t<decltype(m)>;
+                    return getSyncValue<M>();
+                },
+                msg);
+        }
+
+    private:
+        // C++17-compatible detection of static sync member
+        template <typename T, typename = void>
+        struct has_sync : std::false_type
+        {
+        };
+
+        template <typename T>
+        struct has_sync<T, std::void_t<decltype(T::sync)>> : std::true_type
+        {
+        };
+
+        template <typename T>
+        static constexpr bool getSyncValue()
+        {
+            if constexpr (has_sync<T>::value)
+            {
+                return T::sync;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        /**
+         * @brief Try to parse JSON into a specific type
+         * @return true if parsing succeeded (name matched), false otherwise
+         */
+        template <typename T>
+        static bool tryParseType(const std::string& name, const nlohmann::json& params, std::optional<Variant>& out)
+        {
+            if (name == T::name)
+            {
+                T value{};
+                if (!params.is_null() && !params.empty())
+                {
+                    value = params.get<T>();
+                }
+                out = value;
+                return true; // Stop the fold expression
+            }
+            return false; // Continue to next type
+        }
+    };
+
+    // Registry with all StateMessage types (for serialization/deserialization)
+    using StateMessageRegistry = MessageRegistry<
+        // Events
+        Events::InitComplete, Events::InitFailed, Events::TargetFound, Events::TargetLost, Events::MeasurementComplete, Events::ErrorOccurred,
+        // State-changing Commands
+        Commands::PowerOn, Commands::PowerOff, Commands::StartSearch, Commands::StartMeasure, Commands::StopMeasure, Commands::Reset, Commands::ReturnToIdle,
+        // Action Commands
+        Commands::Home, Commands::GetPosition, Commands::SetLaserPower, Commands::Compensate, Commands::GetStatus, Commands::MoveRelative>;
+
+    // Registry for state-changing messages only (Events + state-changing Commands)
+    // Used by paramsToStateMessage to determine if a message should be processed by the HSM
+    // Action Commands (Home, GetPosition, etc.) are handled separately by processActionCommand
+    using StateChangingMessageRegistry = MessageRegistry<
+        // Events
+        Events::InitComplete, Events::InitFailed, Events::TargetFound, Events::TargetLost, Events::MeasurementComplete, Events::ErrorOccurred,
+        // State-changing Commands only
+        Commands::PowerOn, Commands::PowerOff, Commands::StartSearch, Commands::StartMeasure, Commands::StopMeasure, Commands::Reset, Commands::ReturnToIdle>;
 
     // ============================================================================
     // States - Hierarchical state definitions using nested variants
@@ -1171,18 +1431,20 @@ namespace LaserTracker
 
         /**
          * @brief Send a message asynchronously (fire and forget)
+         * Uses the static name from the registry for consistent JSON serialization
          */
         uint64_t sendMessageAsync(const StateMessage& msg)
         {
-            return sendAsync(getMessageName(msg), messageToParams(msg), isMessageSync(msg));
+            return sendAsync(StateMessageRegistry::getName(msg), messageToParams(msg), isMessageSync(msg));
         }
 
         /**
          * @brief Send a message and wait for response
+         * Uses the static name from the registry for consistent JSON serialization
          */
         Message sendMessage(const StateMessage& msg, uint32_t timeoutMs = 30000)
         {
-            return send(getMessageName(msg), messageToParams(msg), isMessageSync(msg), timeoutMs);
+            return send(StateMessageRegistry::getName(msg), messageToParams(msg), isMessageSync(msg), timeoutMs);
         }
 
         // --------------------------------------------------------------------
@@ -1701,172 +1963,35 @@ namespace LaserTracker
         }
 
         // --------------------------------------------------------------------
-        // Conversion Helpers - Unified for all StateMessage types
+        // Conversion Helpers - Using MessageRegistry for type-safe JSON conversion
         // --------------------------------------------------------------------
 
         /**
          * @brief Check if a message requires synchronous execution
+         * Delegates to StateMessageRegistry::isSync()
          */
-        static bool isMessageSync(const StateMessage& msg)
-        {
-            return std::visit(
-                [](const auto& m) -> bool
-                {
-                    using M = std::decay_t<decltype(m)>;
-                    // Only action commands have the sync flag
-                    if constexpr (std::is_same_v<M, Commands::Home> || std::is_same_v<M, Commands::GetPosition> || std::is_same_v<M, Commands::SetLaserPower> ||
-                                  std::is_same_v<M, Commands::Compensate> || std::is_same_v<M, Commands::GetStatus> || std::is_same_v<M, Commands::MoveRelative>)
-                    {
-                        return m.sync;
-                    }
-                    else
-                    {
-                        return false;
-                    }
-                },
-                msg);
-        }
+        static bool isMessageSync(const StateMessage& msg) { return StateMessageRegistry::isSync(msg); }
 
         /**
          * @brief Convert a StateMessage to JSON params
+         * Delegates to StateMessageRegistry::toJson() which uses the to_json() ADL functions
          */
-        static Json messageToParams(const StateMessage& msg)
-        {
-            return std::visit(
-                [](const auto& m) -> Json
-                {
-                    using M = std::decay_t<decltype(m)>;
-                    Json params = Json::object();
-
-                    // Events
-                    if constexpr (std::is_same_v<M, Events::TargetFound>)
-                    {
-                        params["distance_mm"] = m.distance_mm;
-                    }
-                    else if constexpr (std::is_same_v<M, Events::InitFailed>)
-                    {
-                        params["errorReason"] = m.errorReason;
-                    }
-                    else if constexpr (std::is_same_v<M, Events::MeasurementComplete>)
-                    {
-                        params["x"] = m.x;
-                        params["y"] = m.y;
-                        params["z"] = m.z;
-                    }
-                    else if constexpr (std::is_same_v<M, Events::ErrorOccurred>)
-                    {
-                        params["errorCode"]   = m.errorCode;
-                        params["description"] = m.description;
-                    }
-                    // Action Commands
-                    else if constexpr (std::is_same_v<M, Commands::Home>)
-                    {
-                        params["speed"] = m.speed;
-                    }
-                    else if constexpr (std::is_same_v<M, Commands::SetLaserPower>)
-                    {
-                        params["powerLevel"] = m.powerLevel;
-                    }
-                    else if constexpr (std::is_same_v<M, Commands::Compensate>)
-                    {
-                        params["temperature"] = m.temperature;
-                        params["pressure"]    = m.pressure;
-                        params["humidity"]    = m.humidity;
-                    }
-                    else if constexpr (std::is_same_v<M, Commands::MoveRelative>)
-                    {
-                        params["azimuth"]   = m.azimuth;
-                        params["elevation"] = m.elevation;
-                    }
-
-                    return params;
-                },
-                msg);
-        }
+        static Json messageToParams(const StateMessage& msg) { return StateMessageRegistry::toJson(msg); }
 
         /**
-         * @brief Parse message name/params into a StateMessage (Events or state-changing Commands)
+         * @brief Parse message name/params into a StateMessage (Events or state-changing Commands only)
+         * Delegates to StateChangingMessageRegistry::fromJson() which uses the from_json() ADL functions
+         * Note: Action commands (Home, GetPosition, etc.) are NOT parsed here - they're handled by processActionCommand
          */
         static std::optional<StateMessage> paramsToStateMessage(const std::string& name, const Json& params)
         {
-            // Events (past tense)
-            if (name == "InitComplete" || name.find("InitComplete") != std::string::npos)
+            auto result = StateChangingMessageRegistry::fromJson(name, params);
+            if (!result)
             {
-                return Events::InitComplete{};
+                return std::nullopt;
             }
-            else if (name == "InitFailed" || name.find("InitFailed") != std::string::npos)
-            {
-                Events::InitFailed e;
-                if (params.contains("errorReason"))
-                {
-                    e.errorReason = params.at("errorReason").get<std::string>();
-                }
-                return e;
-            }
-            else if (name == "TargetFound" || name.find("TargetFound") != std::string::npos)
-            {
-                Events::TargetFound e;
-                if (params.contains("distance_mm"))
-                {
-                    e.distance_mm = params.at("distance_mm").get<double>();
-                }
-                return e;
-            }
-            else if (name == "TargetLost" || name.find("TargetLost") != std::string::npos)
-            {
-                return Events::TargetLost{};
-            }
-            else if (name == "MeasurementComplete" || name.find("MeasurementComplete") != std::string::npos)
-            {
-                Events::MeasurementComplete e;
-                if (params.contains("x"))
-                    e.x = params.at("x").get<double>();
-                if (params.contains("y"))
-                    e.y = params.at("y").get<double>();
-                if (params.contains("z"))
-                    e.z = params.at("z").get<double>();
-                return e;
-            }
-            else if (name == "ErrorOccurred" || name.find("ErrorOccurred") != std::string::npos)
-            {
-                Events::ErrorOccurred e;
-                if (params.contains("errorCode"))
-                    e.errorCode = params.at("errorCode").get<int>();
-                if (params.contains("description"))
-                    e.description = params.at("description").get<std::string>();
-                return e;
-            }
-            // Commands (imperative)
-            else if (name == "PowerOn" || name.find("PowerOn") != std::string::npos)
-            {
-                return Commands::PowerOn{};
-            }
-            else if (name == "PowerOff" || name.find("PowerOff") != std::string::npos)
-            {
-                return Commands::PowerOff{};
-            }
-            else if (name == "StartSearch" || name.find("StartSearch") != std::string::npos)
-            {
-                return Commands::StartSearch{};
-            }
-            else if (name == "StartMeasure" || name.find("StartMeasure") != std::string::npos)
-            {
-                return Commands::StartMeasure{};
-            }
-            else if (name == "StopMeasure" || name.find("StopMeasure") != std::string::npos)
-            {
-                return Commands::StopMeasure{};
-            }
-            else if (name == "Reset" || name.find("Reset") != std::string::npos)
-            {
-                return Commands::Reset{};
-            }
-            else if (name == "ReturnToIdle" || name.find("ReturnToIdle") != std::string::npos)
-            {
-                return Commands::ReturnToIdle{};
-            }
-
-            return std::nullopt;
+            // Convert from the smaller variant to StateMessage using std::visit
+            return std::visit([](auto&& msg) -> StateMessage { return msg; }, *result);
         }
 
         static Message parseJsonMessage(const std::string& jsonStr)
