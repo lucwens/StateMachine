@@ -1,6 +1,6 @@
 /**
  * @file main.cpp
- * @brief Demonstration of HSM (Hierarchical State Machine) State Pattern
+ * @brief Demonstration of Threaded HSM (Hierarchical State Machine)
  *        for a Laser Tracker using C++17 std::variant
  *
  * This program demonstrates:
@@ -12,11 +12,11 @@
  * 6. Threaded HSM with command support
  * 7. Synchronous and asynchronous commands
  * 8. JSON message protocol
+ * 9. Galvanic separation between UI and worker thread
  *
  * Compile with: g++ -std=c++17 -pthread -o laser_tracker_hsm main.cpp
  */
 
-#include "LaserTrackerHSM.hpp"
 #include "ThreadedHSM.hpp"
 #include <atomic>
 #include <chrono>
@@ -31,7 +31,7 @@ using namespace LaserTracker;
 // Helper function to print separator
 // ============================================================================
 
-void printSeparator(const std::string &title = "")
+void printSeparator(const std::string& title = "")
 {
     std::cout << "\n";
     std::cout << "================================================================\n";
@@ -47,299 +47,7 @@ void printSeparator(const std::string &title = "")
 // ============================================================================
 
 /**
- * @brief Demo 1: Normal Operation Flow
- *
- * Demonstrates the typical happy-path workflow:
- * Off -> Operational::Initializing -> Idle -> Tracking::Searching
- *     -> Tracking::Locked -> Tracking::Measuring -> back to Idle -> Off
- */
-void demoNormalOperation()
-{
-    printSeparator("DEMO 1: Normal Operation Flow");
-
-    HSM tracker;
-    tracker.printState();
-
-    // Power on the tracker
-    tracker.processEvent(Events::PowerOn{});
-    tracker.printState();
-
-    // Initialization completes successfully
-    tracker.processEvent(Events::InitComplete{});
-    tracker.printState();
-
-    // Start searching for target
-    tracker.processEvent(Events::StartSearch{});
-    tracker.printState();
-
-    // Target found at 5000mm (5 meters)
-    tracker.processEvent(Events::TargetFound{5000.0});
-    tracker.printState();
-
-    // Start measuring
-    tracker.processEvent(Events::StartMeasure{});
-    tracker.printState();
-
-    // Record some measurement points
-    tracker.processEvent(Events::MeasurementComplete{100.123456, 200.654321, 50.111111});
-    tracker.processEvent(Events::MeasurementComplete{100.234567, 200.765432, 50.222222});
-    tracker.processEvent(Events::MeasurementComplete{100.345678, 200.876543, 50.333333});
-
-    // Stop measuring
-    tracker.processEvent(Events::StopMeasure{});
-    tracker.printState();
-
-    // Return to idle
-    tracker.processEvent(Events::ReturnToIdle{});
-    tracker.printState();
-
-    // Power off
-    tracker.processEvent(Events::PowerOff{});
-    tracker.printState();
-
-    std::cout << "\nDemo 1 completed successfully!\n";
-}
-
-/**
- * @brief Demo 2: Error Handling and Recovery
- *
- * Demonstrates error handling:
- * - Initialization failure
- * - Error during tracking
- * - Reset and recovery
- */
-void demoErrorHandling()
-{
-    printSeparator("DEMO 2: Error Handling and Recovery");
-
-    HSM tracker;
-
-    // Power on
-    tracker.processEvent(Events::PowerOn{});
-    tracker.printState();
-
-    // Simulate initialization failure
-    tracker.processEvent(Events::InitFailed{"Motor calibration failed"});
-    tracker.printState();
-
-    // Reset the system
-    tracker.processEvent(Events::Reset{});
-    tracker.printState();
-
-    // This time initialization succeeds
-    tracker.processEvent(Events::InitComplete{});
-    tracker.printState();
-
-    // Start tracking
-    tracker.processEvent(Events::StartSearch{});
-    tracker.processEvent(Events::TargetFound{3500.0});
-    tracker.printState();
-
-    // Error occurs during tracking
-    tracker.processEvent(Events::ErrorOccurred{42, "Beam interrupted"});
-    tracker.printState();
-
-    // Reset again
-    tracker.processEvent(Events::Reset{});
-    tracker.processEvent(Events::InitComplete{});
-    tracker.printState();
-
-    std::cout << "\nDemo 2 completed successfully!\n";
-}
-
-/**
- * @brief Demo 3: Target Loss and Reacquisition
- *
- * Demonstrates target tracking behavior:
- * - Target loss during locked state
- * - Target loss during measuring
- * - Reacquisition workflow
- */
-void demoTargetLoss()
-{
-    printSeparator("DEMO 3: Target Loss and Reacquisition");
-
-    HSM tracker;
-
-    // Quick setup to tracking state
-    tracker.processEvent(Events::PowerOn{});
-    tracker.processEvent(Events::InitComplete{});
-    tracker.processEvent(Events::StartSearch{});
-    tracker.processEvent(Events::TargetFound{2000.0});
-    tracker.printState();
-
-    // Lose target while locked
-    tracker.processEvent(Events::TargetLost{});
-    tracker.printState();
-
-    // Find target again
-    tracker.processEvent(Events::TargetFound{2100.0});
-    tracker.printState();
-
-    // Start measuring
-    tracker.processEvent(Events::StartMeasure{});
-    tracker.processEvent(Events::MeasurementComplete{50.0, 75.0, 25.0});
-    tracker.printState();
-
-    // Lose target during measurement
-    tracker.processEvent(Events::TargetLost{});
-    tracker.printState();
-
-    // Reacquire target
-    tracker.processEvent(Events::TargetFound{2150.0});
-    tracker.printState();
-
-    std::cout << "\nDemo 3 completed successfully!\n";
-}
-
-/**
- * @brief Demo 4: Invalid Event Handling
- *
- * Demonstrates that invalid events are properly ignored:
- * - Cannot search while off
- * - Cannot measure while searching
- * - Events are rejected with feedback
- */
-void demoInvalidEvents()
-{
-    printSeparator("DEMO 4: Invalid Event Handling");
-
-    HSM tracker;
-    tracker.printState();
-
-    // Try to start search while off (should be ignored)
-    std::cout << "\n-- Attempting invalid events in Off state --\n";
-    tracker.processEvent(Events::StartSearch{});
-
-    // Try InitComplete while off (should be ignored)
-    tracker.processEvent(Events::InitComplete{});
-
-    // Now power on and go to idle
-    tracker.processEvent(Events::PowerOn{});
-    tracker.processEvent(Events::InitComplete{});
-    tracker.printState();
-
-    // Try to measure while in idle (should be ignored)
-    std::cout << "\n-- Attempting invalid events in Idle state --\n";
-    tracker.processEvent(Events::StartMeasure{});
-
-    // Try target lost while in idle (should be ignored)
-    tracker.processEvent(Events::TargetLost{});
-
-    // Go to searching
-    tracker.processEvent(Events::StartSearch{});
-    tracker.printState();
-
-    // Try to start measure while searching (should be ignored)
-    std::cout << "\n-- Attempting invalid events in Searching state --\n";
-    tracker.processEvent(Events::StartMeasure{});
-
-    std::cout << "\nDemo 4 completed successfully!\n";
-}
-
-/**
- * @brief Demo 5: State Inspection API
- *
- * Demonstrates the state query capabilities:
- * - Checking current state type
- * - Getting hierarchical state names
- * - State pattern introspection
- */
-void demoStateInspection()
-{
-    printSeparator("DEMO 5: State Inspection API");
-
-    HSM tracker;
-
-    // Check initial state
-    std::cout << "Is in Off state? " << (tracker.isInState<States::Off>() ? "Yes" : "No") << "\n";
-    std::cout << "Is in Operational state? " << (tracker.isInState<States::Operational>() ? "Yes" : "No") << "\n";
-    std::cout << "Full state path: " << tracker.getCurrentStateName() << "\n\n";
-
-    // Power on
-    tracker.processEvent(Events::PowerOn{});
-    std::cout << "Is in Off state? " << (tracker.isInState<States::Off>() ? "Yes" : "No") << "\n";
-    std::cout << "Is in Operational state? " << (tracker.isInState<States::Operational>() ? "Yes" : "No") << "\n";
-    std::cout << "Full state path: " << tracker.getCurrentStateName() << "\n\n";
-
-    // Complete initialization and go to tracking
-    tracker.processEvent(Events::InitComplete{});
-    std::cout << "Full state path: " << tracker.getCurrentStateName() << "\n";
-
-    tracker.processEvent(Events::StartSearch{});
-    std::cout << "Full state path: " << tracker.getCurrentStateName() << "\n";
-
-    tracker.processEvent(Events::TargetFound{1000.0});
-    std::cout << "Full state path: " << tracker.getCurrentStateName() << "\n";
-
-    tracker.processEvent(Events::StartMeasure{});
-    std::cout << "Full state path: " << tracker.getCurrentStateName() << "\n";
-
-    std::cout << "\nDemo 5 completed successfully!\n";
-}
-
-/**
- * @brief Demo 6: Comprehensive Stress Test
- *
- * Runs through many state transitions to verify HSM robustness
- */
-void demoStressTest()
-{
-    printSeparator("DEMO 6: Comprehensive State Transition Test");
-
-    HSM tracker;
-    int successfulTransitions = 0;
-    int ignoredEvents         = 0;
-
-    auto processAndCount      = [&](const Event &e)
-    {
-        if (tracker.processEvent(e))
-        {
-            ++successfulTransitions;
-        }
-        else
-        {
-            ++ignoredEvents;
-        }
-    };
-
-    // Run through multiple complete cycles
-    for (int cycle = 1; cycle <= 3; ++cycle)
-    {
-        std::cout << "\n--- Cycle " << cycle << " ---\n";
-
-        // Full workflow
-        processAndCount(Events::PowerOn{});
-        processAndCount(Events::InitComplete{});
-        processAndCount(Events::StartSearch{});
-        processAndCount(Events::TargetFound{1000.0 * cycle});
-        processAndCount(Events::StartMeasure{});
-
-        // Multiple measurements
-        for (int m = 0; m < 5; ++m)
-        {
-            processAndCount(Events::MeasurementComplete{static_cast<double>(m), static_cast<double>(m * 2), static_cast<double>(m * 3)});
-        }
-
-        processAndCount(Events::StopMeasure{});
-        processAndCount(Events::ReturnToIdle{});
-        processAndCount(Events::PowerOff{});
-    }
-
-    std::cout << "\n--- Test Summary ---\n";
-    std::cout << "Successful transitions: " << successfulTransitions << "\n";
-    std::cout << "Ignored events: " << ignoredEvents << "\n";
-    std::cout << "Final state: " << tracker.getCurrentStateName() << "\n";
-
-    std::cout << "\nDemo 6 completed successfully!\n";
-}
-
-// ============================================================================
-// Threaded HSM Demos
-// ============================================================================
-
-/**
- * @brief Demo 7: Threaded HSM Basic Operation
+ * @brief Demo 1: Threaded HSM Basic Operation
  *
  * Demonstrates the threaded HSM with:
  * - HSM running in separate thread
@@ -348,7 +56,7 @@ void demoStressTest()
  */
 void demoThreadedBasic()
 {
-    printSeparator("DEMO 7: Threaded HSM Basic Operation");
+    printSeparator("DEMO 1: Threaded HSM Basic Operation");
 
     ThreadedHSM tracker;
     tracker.start();
@@ -377,17 +85,17 @@ void demoThreadedBasic()
     std::cout << "Final state: " << tracker.getCurrentStateName() << "\n";
 
     tracker.stop();
-    std::cout << "\nDemo 7 completed successfully!\n";
+    std::cout << "\nDemo 1 completed successfully!\n";
 }
 
 /**
- * @brief Demo 8: Commands with State Restrictions
+ * @brief Demo 2: Commands with State Restrictions
  *
  * Demonstrates commands that are restricted to specific states
  */
 void demoCommands()
 {
-    printSeparator("DEMO 8: Commands with State Restrictions");
+    printSeparator("DEMO 2: Commands with State Restrictions");
 
     ThreadedHSM tracker;
     tracker.start();
@@ -444,17 +152,17 @@ void demoCommands()
     std::cout << "Home in Locked state: success=" << (invalidHome.success ? "true" : "false") << ", error=" << invalidHome.error << "\n";
 
     tracker.stop();
-    std::cout << "\nDemo 8 completed successfully!\n";
+    std::cout << "\nDemo 2 completed successfully!\n";
 }
 
 /**
- * @brief Demo 9: Synchronous Command Buffering
+ * @brief Demo 3: Synchronous Command Buffering
  *
  * Demonstrates that commands are buffered during sync command execution
  */
 void demoCommandBuffering()
 {
-    printSeparator("DEMO 9: Synchronous Command Buffering");
+    printSeparator("DEMO 3: Synchronous Command Buffering");
 
     ThreadedHSM tracker;
     tracker.start();
@@ -486,17 +194,17 @@ void demoCommandBuffering()
     std::cout << "All buffered commands should have executed after Home completed.\n";
 
     tracker.stop();
-    std::cout << "\nDemo 9 completed successfully!\n";
+    std::cout << "\nDemo 3 completed successfully!\n";
 }
 
 /**
- * @brief Demo 10: JSON Message Protocol
+ * @brief Demo 4: JSON Message Protocol
  *
  * Demonstrates sending raw JSON messages
  */
 void demoJsonProtocol()
 {
-    printSeparator("DEMO 10: JSON Message Protocol");
+    printSeparator("DEMO 4: JSON Message Protocol");
 
     ThreadedHSM tracker;
     tracker.start();
@@ -533,17 +241,17 @@ void demoJsonProtocol()
     }
 
     tracker.stop();
-    std::cout << "\nDemo 10 completed successfully!\n";
+    std::cout << "\nDemo 4 completed successfully!\n";
 }
 
 /**
- * @brief Demo 11: Multi-threaded Event Sending
+ * @brief Demo 5: Multi-threaded Event Sending
  *
  * Demonstrates multiple threads sending events to the HSM
  */
 void demoMultiThreaded()
 {
-    printSeparator("DEMO 11: Multi-threaded Event Sending");
+    printSeparator("DEMO 5: Multi-threaded Event Sending");
 
     ThreadedHSM tracker;
     tracker.start();
@@ -589,7 +297,85 @@ void demoMultiThreaded()
     std::cout << "Final state: " << tracker.getCurrentStateName() << "\n";
 
     tracker.stop();
-    std::cout << "\nDemo 11 completed successfully!\n";
+    std::cout << "\nDemo 5 completed successfully!\n";
+}
+
+/**
+ * @brief Demo 6: Complete Workflow
+ *
+ * Demonstrates a complete workflow through all states
+ */
+void demoCompleteWorkflow()
+{
+    printSeparator("DEMO 6: Complete Workflow");
+
+    ThreadedHSM tracker;
+    tracker.start();
+
+    std::cout << "\n--- Running through complete laser tracker workflow ---\n";
+
+    // Power on and initialize
+    std::cout << "\n[1] Powering on...\n";
+    auto resp = tracker.sendEventSync(Events::PowerOn{});
+    std::cout << "State: " << tracker.getCurrentStateName() << "\n";
+
+    std::cout << "\n[2] Completing initialization...\n";
+    resp = tracker.sendEventSync(Events::InitComplete{});
+    std::cout << "State: " << tracker.getCurrentStateName() << "\n";
+
+    // Home the system
+    std::cout << "\n[3] Homing system...\n";
+    auto homeResult = tracker.sendCommand(Commands::Home{75.0});
+    std::cout << "Home result: " << (homeResult.success ? "success" : "failed") << "\n";
+
+    // Start tracking
+    std::cout << "\n[4] Starting target search...\n";
+    resp = tracker.sendEventSync(Events::StartSearch{});
+    std::cout << "State: " << tracker.getCurrentStateName() << "\n";
+
+    // Simulate finding target
+    std::cout << "\n[5] Target found at 5000mm...\n";
+    resp = tracker.sendEventSync(Events::TargetFound{5000.0});
+    std::cout << "State: " << tracker.getCurrentStateName() << "\n";
+
+    // Get position
+    std::cout << "\n[6] Getting position...\n";
+    auto posResult = tracker.sendCommand(Commands::GetPosition{});
+    std::cout << "Position: " << posResult.params.dump() << "\n";
+
+    // Start measuring
+    std::cout << "\n[7] Starting measurement session...\n";
+    resp = tracker.sendEventSync(Events::StartMeasure{});
+    std::cout << "State: " << tracker.getCurrentStateName() << "\n";
+
+    // Record some measurements
+    std::cout << "\n[8] Recording measurement points...\n";
+    tracker.sendEventSync(Events::MeasurementComplete{100.123, 200.456, 50.789});
+    tracker.sendEventSync(Events::MeasurementComplete{100.234, 200.567, 50.890});
+    tracker.sendEventSync(Events::MeasurementComplete{100.345, 200.678, 50.901});
+
+    // Stop measuring
+    std::cout << "\n[9] Stopping measurement...\n";
+    resp = tracker.sendEventSync(Events::StopMeasure{});
+    std::cout << "State: " << tracker.getCurrentStateName() << "\n";
+
+    // Return to idle
+    std::cout << "\n[10] Returning to idle...\n";
+    resp = tracker.sendEventSync(Events::ReturnToIdle{});
+    std::cout << "State: " << tracker.getCurrentStateName() << "\n";
+
+    // Get final status
+    std::cout << "\n[11] Final status check...\n";
+    auto statusResult = tracker.sendCommand(Commands::GetStatus{});
+    std::cout << "Status: " << statusResult.params.dump() << "\n";
+
+    // Power off
+    std::cout << "\n[12] Powering off...\n";
+    resp = tracker.sendEventSync(Events::PowerOff{});
+    std::cout << "State: " << tracker.getCurrentStateName() << "\n";
+
+    tracker.stop();
+    std::cout << "\nDemo 6 completed successfully!\n";
 }
 
 // ============================================================================
@@ -630,116 +416,14 @@ Available Commands:
 )";
 }
 
-void runInteractiveMode()
-{
-    printSeparator("INTERACTIVE MODE (Basic HSM)");
-    std::cout << "Control the Laser Tracker HSM interactively.\n";
-    std::cout << "Note: This uses the basic (non-threaded) HSM. Use mode 9 for threaded.\n";
-    printHelp();
-
-    HSM         tracker;
-    std::string line;
-
-    while (true)
-    {
-        std::cout << "\n[" << tracker.getCurrentStateName() << "] > ";
-        if (!std::getline(std::cin, line))
-            break;
-
-        std::istringstream iss(line);
-        std::string        cmd;
-        iss >> cmd;
-
-        if (cmd.empty())
-            continue;
-        if (cmd == "quit" || cmd == "exit")
-            break;
-        if (cmd == "help")
-        {
-            printHelp();
-            continue;
-        }
-        if (cmd == "state")
-        {
-            tracker.printState();
-            continue;
-        }
-
-        if (cmd == "power_on")
-        {
-            tracker.processEvent(Events::PowerOn{});
-        }
-        else if (cmd == "power_off")
-        {
-            tracker.processEvent(Events::PowerOff{});
-        }
-        else if (cmd == "init_ok")
-        {
-            tracker.processEvent(Events::InitComplete{});
-        }
-        else if (cmd == "init_fail")
-        {
-            tracker.processEvent(Events::InitFailed{"User simulated failure"});
-        }
-        else if (cmd == "search")
-        {
-            tracker.processEvent(Events::StartSearch{});
-        }
-        else if (cmd == "found")
-        {
-            double dist = 1000.0;
-            iss >> dist;
-            tracker.processEvent(Events::TargetFound{dist});
-        }
-        else if (cmd == "lost")
-        {
-            tracker.processEvent(Events::TargetLost{});
-        }
-        else if (cmd == "measure")
-        {
-            tracker.processEvent(Events::StartMeasure{});
-        }
-        else if (cmd == "point")
-        {
-            double x = 0, y = 0, z = 0;
-            iss >> x >> y >> z;
-            tracker.processEvent(Events::MeasurementComplete{x, y, z});
-        }
-        else if (cmd == "stop")
-        {
-            tracker.processEvent(Events::StopMeasure{});
-        }
-        else if (cmd == "idle")
-        {
-            tracker.processEvent(Events::ReturnToIdle{});
-        }
-        else if (cmd == "error")
-        {
-            int code = 99;
-            iss >> code;
-            tracker.processEvent(Events::ErrorOccurred{code, "User simulated error"});
-        }
-        else if (cmd == "reset")
-        {
-            tracker.processEvent(Events::Reset{});
-        }
-        else
-        {
-            std::cout << "Unknown command: " << cmd << ". Type 'help' for available commands.\n";
-        }
-    }
-
-    std::cout << "\nExiting interactive mode.\n";
-}
-
 /**
- * @brief Threaded Interactive Mode - uses ThreadedHSM with full command support
+ * @brief Interactive Mode - uses ThreadedHSM with full command support
  */
-void runThreadedInteractiveMode()
+void runInteractiveMode()
 {
     printSeparator("INTERACTIVE MODE (Threaded HSM with Commands)");
     std::cout << "Control the Threaded Laser Tracker HSM interactively.\n";
-    std::cout << "Commands run in a separate thread with sync/async support.\n";
+    std::cout << "Commands run in a separate worker thread with sync/async support.\n";
     printHelp();
 
     ThreadedHSM tracker;
@@ -946,7 +630,7 @@ void runThreadedInteractiveMode()
     }
 
     tracker.stop();
-    std::cout << "\nExiting threaded interactive mode.\n";
+    std::cout << "\nExiting interactive mode.\n";
 }
 
 // ============================================================================
@@ -957,42 +641,35 @@ void printMainMenu()
 {
     std::cout << R"(
 ================================================================
-   Laser Tracker HSM Demo - C++17 std::variant Implementation
+   Laser Tracker Threaded HSM Demo - C++17 std::variant
 ================================================================
 
 This program demonstrates the Hierarchical State Machine (HSM)
 pattern using std::variant for type-safe state representation.
 
-=== Basic HSM Demos (Single-threaded) ===
-  1. Normal Operation Flow
-  2. Error Handling and Recovery
-  3. Target Loss and Reacquisition
-  4. Invalid Event Handling
-  5. State Inspection API
-  6. Comprehensive Stress Test
+The HSM runs in a dedicated worker thread, providing galvanic
+separation between the main/UI thread and the state machine engine.
 
-=== Threaded HSM Demos (Multi-threaded with Commands) ===
-  7. Threaded HSM Basic Operation
-  8. Commands with State Restrictions
-  9. Synchronous Command Buffering
-  10. JSON Message Protocol
-  11. Multi-threaded Event Sending
+=== Demos ===
+  1. Threaded HSM Basic Operation
+  2. Commands with State Restrictions
+  3. Synchronous Command Buffering
+  4. JSON Message Protocol
+  5. Multi-threaded Event Sending
+  6. Complete Workflow
 
-=== Interactive Modes ===
-  12. Basic Interactive Mode (single-threaded)
-  13. Threaded Interactive Mode (with commands)
+=== Interactive Mode ===
+  7. Interactive Mode (with full command support)
 
 === Batch Operations ===
-  14. Run All Basic Demos (1-6)
-  15. Run All Threaded Demos (7-11)
-  16. Run All Demos
+  8. Run All Demos
 
   0. Exit
 
 )";
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char* argv[])
 {
     // Check for command-line arguments
     if (argc > 1)
@@ -1000,41 +677,13 @@ int main(int argc, char *argv[])
         std::string arg = argv[1];
         if (arg == "--all" || arg == "-a")
         {
-            // Run all basic demos
-            demoNormalOperation();
-            demoErrorHandling();
-            demoTargetLoss();
-            demoInvalidEvents();
-            demoStateInspection();
-            demoStressTest();
-            // Run all threaded demos
             demoThreadedBasic();
             demoCommands();
             demoCommandBuffering();
             demoJsonProtocol();
             demoMultiThreaded();
+            demoCompleteWorkflow();
             printSeparator("ALL DEMOS COMPLETED SUCCESSFULLY");
-            return 0;
-        }
-        else if (arg == "--basic" || arg == "-b")
-        {
-            demoNormalOperation();
-            demoErrorHandling();
-            demoTargetLoss();
-            demoInvalidEvents();
-            demoStateInspection();
-            demoStressTest();
-            printSeparator("ALL BASIC DEMOS COMPLETED SUCCESSFULLY");
-            return 0;
-        }
-        else if (arg == "--threaded" || arg == "-t")
-        {
-            demoThreadedBasic();
-            demoCommands();
-            demoCommandBuffering();
-            demoJsonProtocol();
-            demoMultiThreaded();
-            printSeparator("ALL THREADED DEMOS COMPLETED SUCCESSFULLY");
             return 0;
         }
         else if (arg == "--interactive" || arg == "-i")
@@ -1042,22 +691,14 @@ int main(int argc, char *argv[])
             runInteractiveMode();
             return 0;
         }
-        else if (arg == "--threaded-interactive" || arg == "-ti")
-        {
-            runThreadedInteractiveMode();
-            return 0;
-        }
         else if (arg == "--help" || arg == "-h")
         {
             std::cout << "Usage: " << argv[0] << " [options]\n"
                       << "Options:\n"
-                      << "  --all, -a                  Run all demos\n"
-                      << "  --basic, -b                Run basic (non-threaded) demos\n"
-                      << "  --threaded, -t             Run threaded demos\n"
-                      << "  --interactive, -i          Run basic interactive mode\n"
-                      << "  --threaded-interactive, -ti Run threaded interactive mode\n"
-                      << "  --help, -h                 Show this help\n"
-                      << "  (no args)                  Show menu\n";
+                      << "  --all, -a          Run all demos\n"
+                      << "  --interactive, -i  Run interactive mode\n"
+                      << "  --help, -h         Show this help\n"
+                      << "  (no args)          Show menu\n";
             return 0;
         }
     }
@@ -1082,78 +723,34 @@ int main(int argc, char *argv[])
             case 0:
                 std::cout << "Goodbye!\n";
                 return 0;
-            // Basic demos
             case 1:
-                demoNormalOperation();
+                demoThreadedBasic();
                 break;
             case 2:
-                demoErrorHandling();
+                demoCommands();
                 break;
             case 3:
-                demoTargetLoss();
+                demoCommandBuffering();
                 break;
             case 4:
-                demoInvalidEvents();
+                demoJsonProtocol();
                 break;
             case 5:
-                demoStateInspection();
+                demoMultiThreaded();
                 break;
             case 6:
-                demoStressTest();
+                demoCompleteWorkflow();
                 break;
-            // Threaded demos
             case 7:
-                demoThreadedBasic();
-                break;
-            case 8:
-                demoCommands();
-                break;
-            case 9:
-                demoCommandBuffering();
-                break;
-            case 10:
-                demoJsonProtocol();
-                break;
-            case 11:
-                demoMultiThreaded();
-                break;
-            // Interactive modes
-            case 12:
                 runInteractiveMode();
                 break;
-            case 13:
-                runThreadedInteractiveMode();
-                break;
-            // Batch operations
-            case 14:
-                demoNormalOperation();
-                demoErrorHandling();
-                demoTargetLoss();
-                demoInvalidEvents();
-                demoStateInspection();
-                demoStressTest();
-                printSeparator("ALL BASIC DEMOS COMPLETED SUCCESSFULLY");
-                break;
-            case 15:
+            case 8:
                 demoThreadedBasic();
                 demoCommands();
                 demoCommandBuffering();
                 demoJsonProtocol();
                 demoMultiThreaded();
-                printSeparator("ALL THREADED DEMOS COMPLETED SUCCESSFULLY");
-                break;
-            case 16:
-                demoNormalOperation();
-                demoErrorHandling();
-                demoTargetLoss();
-                demoInvalidEvents();
-                demoStateInspection();
-                demoStressTest();
-                demoThreadedBasic();
-                demoCommands();
-                demoCommandBuffering();
-                demoJsonProtocol();
-                demoMultiThreaded();
+                demoCompleteWorkflow();
                 printSeparator("ALL DEMOS COMPLETED SUCCESSFULLY");
                 break;
             default:

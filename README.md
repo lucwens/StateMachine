@@ -1,6 +1,6 @@
-# Laser Tracker HSM - Hierarchical State Machine Demo
+# Laser Tracker Threaded HSM - Hierarchical State Machine Demo
 
-A C++17 implementation demonstrating the **Hierarchical State Machine (HSM)** pattern using `std::variant` for type-safe state representation. Includes a **threaded HSM** with JSON messaging protocol, commands, and timeout support.
+A C++17 implementation demonstrating the **Hierarchical State Machine (HSM)** pattern using `std::variant` for type-safe state representation. The HSM runs in a **dedicated worker thread**, providing **galvanic separation** between the main/UI thread and the state machine engine.
 
 ## Overview
 
@@ -11,7 +11,8 @@ This project showcases modern C++ patterns for implementing complex state machin
 - **State entry/exit actions** for resource management
 - **Composite states** containing sub-states
 - **Event-driven transitions** with proper action handling
-- **Threaded HSM** running in a dedicated thread
+- **Dedicated worker thread** for the HSM engine
+- **Galvanic separation** between UI and worker threads
 - **Commands** (non-state-changing actions with state restrictions)
 - **JSON message protocol** for inter-thread communication
 - **Synchronous/asynchronous execution** with timeout support
@@ -134,9 +135,9 @@ classDiagram
     Tracking --> TrackingSubState
 ```
 
-## Threaded HSM
+## Threaded Architecture
 
-The `ThreadedHSM` class extends the basic HSM with multi-threading support:
+The `ThreadedHSM` class provides complete galvanic separation between the UI/main thread and the HSM worker thread:
 
 ### Features
 
@@ -398,21 +399,12 @@ g++ -std=c++17 -pthread -o laser_tracker_hsm main.cpp
 
 ### Demo Scenarios
 
-**Basic HSM Demos (1-6):**
-1. **Normal Operation Flow** - Happy-path workflow from power-on through measurement
-2. **Error Handling and Recovery** - Initialization failures and error recovery
-3. **Target Loss and Reacquisition** - Handling target loss during tracking
-4. **Invalid Event Handling** - Demonstrating ignored events in wrong states
-5. **State Inspection API** - Querying state machine state
-6. **Comprehensive Stress Test** - Multiple complete cycles
-
-**Threaded HSM Demos (7-12):**
-7. **Threaded HSM Basic Operation** - Async/sync event sending
-8. **Commands with State Restrictions** - Command validation and execution
-9. **Synchronous Command Buffering** - Message queuing during sync operations
-10. **JSON Message Protocol** - Raw JSON message handling
-11. **Message Timeout Handling** - Timeout behavior demonstration
-12. **Mixed Events and Commands** - Complex multi-threaded scenarios
+1. **Threaded HSM Basic Operation** - Async/sync event sending to worker thread
+2. **Commands with State Restrictions** - Command validation and execution
+3. **Synchronous Command Buffering** - Message queuing during sync operations
+4. **JSON Message Protocol** - Raw JSON message handling
+5. **Multi-threaded Event Sending** - Multiple threads sending events to HSM
+6. **Complete Workflow** - Full laser tracker workflow through all states
 
 ## State Transition Table
 
@@ -439,8 +431,7 @@ g++ -std=c++17 -pthread -o laser_tracker_hsm main.cpp
 ```
 StateMachine/
 ├── CMakeLists.txt        # CMake build configuration
-├── LaserTrackerHSM.hpp   # Core HSM implementation (header-only)
-├── ThreadedHSM.hpp       # Threaded HSM with commands & JSON messaging
+├── ThreadedHSM.hpp       # Complete HSM with threading, commands & JSON messaging
 ├── main.cpp              # Demo application
 ├── .clang-format         # Code formatting configuration
 ├── claude.md             # Claude Code guidelines
@@ -449,12 +440,13 @@ StateMachine/
 
 ## Key Design Decisions
 
-1. **Header-Only Implementation**: Both `LaserTrackerHSM.hpp` and `ThreadedHSM.hpp` are header-only for easy integration
-2. **Value Semantics**: States are value types stored in variants, avoiding heap allocation
-3. **Minimal Dependencies**: Uses C++ standard library plus [nlohmann/json](https://github.com/nlohmann/json) for JSON handling
-4. **Compile-Time Safety**: Type errors are caught at compile time, not runtime
-5. **Unified Messaging**: Events and commands use the same message infrastructure
-6. **Industry-Standard JSON**: Uses nlohmann/json for robust JSON parsing and serialization
+1. **Header-Only Implementation**: `ThreadedHSM.hpp` is header-only for easy integration
+2. **Galvanic Separation**: Complete thread isolation between UI and HSM worker
+3. **Value Semantics**: States are value types stored in variants, avoiding heap allocation
+4. **Minimal Dependencies**: Uses C++ standard library plus [nlohmann/json](https://github.com/nlohmann/json) for JSON handling
+5. **Compile-Time Safety**: Type errors are caught at compile time, not runtime
+6. **Unified Messaging**: Events and commands use the same message infrastructure
+7. **Industry-Standard JSON**: Uses nlohmann/json for robust JSON parsing and serialization
 
 ## References
 
