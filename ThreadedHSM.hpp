@@ -1,13 +1,14 @@
 /**
  * @file ThreadedHSM.hpp
- * @brief Threaded Hierarchical State Machine with Commands support
+ * @brief Threaded Hierarchical State Machine with unified Command interface
  *
  * This is a complete HSM implementation with:
  * - Hierarchical (nested) states using std::variant
  * - State entry/exit actions
- * - Event-driven transitions using std::visit
+ * - Command-driven transitions using std::visit
  * - Type-safe state handling
- * - Commands (non-state-changing actions restricted to specific states)
+ * - StateCommands (commands that trigger state transitions)
+ * - ActionCommands (commands that don't change state, restricted to specific states)
  * - JSON message protocol for inter-thread communication
  * - Synchronous and asynchronous command execution
  * - Command buffering with futures/promises
@@ -47,8 +48,7 @@
  * JSON Message Protocol:
  * {
  *   "id": <unique_identifier>,
- *   "type": "event" | "command",
- *   "name": <event_or_command_name>,
+ *   "name": <command_name>,
  *   "params": { ... },
  *   "sync": true | false
  * }
@@ -97,10 +97,10 @@ namespace LaserTracker
     class HSM;
 
     // ============================================================================
-    // Events - All possible events that can trigger state transitions
+    // StateCommands - Commands that trigger state transitions
     // ============================================================================
 
-    namespace Events
+    namespace StateCommands
     {
         struct PowerOn
         {
@@ -169,17 +169,18 @@ namespace LaserTracker
         {
             std::string operator()() const { return "ReturnToIdle"; }
         };
-    } // namespace Events
+    } // namespace StateCommands
 
-    // Event variant - all possible events
-    using Event =
-        std::variant<Events::PowerOn, Events::PowerOff, Events::InitComplete, Events::InitFailed, Events::StartSearch, Events::TargetFound, Events::TargetLost,
-                     Events::StartMeasure, Events::StopMeasure, Events::MeasurementComplete, Events::ErrorOccurred, Events::Reset, Events::ReturnToIdle>;
+    // StateCommand variant - all commands that trigger state transitions
+    using StateCommand =
+        std::variant<StateCommands::PowerOn, StateCommands::PowerOff, StateCommands::InitComplete, StateCommands::InitFailed, StateCommands::StartSearch,
+                     StateCommands::TargetFound, StateCommands::TargetLost, StateCommands::StartMeasure, StateCommands::StopMeasure,
+                     StateCommands::MeasurementComplete, StateCommands::ErrorOccurred, StateCommands::Reset, StateCommands::ReturnToIdle>;
 
-    // Helper to get event name
-    inline std::string getEventName(const Event& event)
+    // Helper to get state command name
+    inline std::string getStateCommandName(const StateCommand& cmd)
     {
-        return std::visit([](const auto& e) { return e(); }, event);
+        return std::visit([](const auto& c) { return c(); }, cmd);
     }
 
     // ============================================================================
@@ -359,7 +360,7 @@ namespace LaserTracker
      * @brief Internal Hierarchical State Machine for Laser Tracker
      *
      * Uses std::variant for type-safe state representation and std::visit
-     * for event dispatching with proper entry/exit action handling.
+     * for command dispatching with proper entry/exit action handling.
      *
      * Note: This class is used internally by ThreadedHSM. For thread-safe
      * access, use the ThreadedHSM wrapper class.
@@ -374,19 +375,19 @@ namespace LaserTracker
         }
 
         /**
-         * @brief Process an event and perform state transition if applicable
-         * @param event The event to process
+         * @brief Process a state command and perform state transition if applicable
+         * @param command The state command to process
          * @return true if a transition occurred, false otherwise
          */
-        bool processEvent(const Event& event)
+        bool processCommand(const StateCommand& command)
         {
-            std::cout << "\n>>> Event: " << getEventName(event) << "\n";
+            std::cout << "\n>>> Command: " << getStateCommandName(command) << "\n";
 
-            bool transitioned = std::visit([this, &event](auto& state) -> bool { return this->handleEvent(state, event); }, currentState_);
+            bool transitioned = std::visit([this, &command](auto& state) -> bool { return this->handleCommand(state, command); }, currentState_);
 
             if (!transitioned)
             {
-                std::cout << "  (Event ignored in current state)\n";
+                std::cout << "  (Command ignored in current state)\n";
             }
 
             return transitioned;
@@ -473,14 +474,14 @@ namespace LaserTracker
         // ------------------------------------------------------------------------
 
         // Handle events in Off state
-        bool handleEvent(States::Off& state, const Event& event)
+        bool handleCommand(States::Off& state, const StateCommand& command)
         {
             return std::visit(
                 [this, &state](const auto& e) -> bool
                 {
                     using E = std::decay_t<decltype(e)>;
 
-                    if constexpr (std::is_same_v<E, Events::PowerOn>)
+                    if constexpr (std::is_same_v<E, StateCommands::PowerOn>)
                     {
                         transitionTo(States::Operational{});
                         return true;
@@ -490,11 +491,11 @@ namespace LaserTracker
                         return false;
                     }
                 },
-                event);
+                command);
         }
 
         // Handle events in Operational state (with sub-state dispatch)
-        bool handleEvent(States::Operational& state, const Event& event)
+        bool handleCommand(States::Operational& state, const StateCommand& command)
         {
             // First, check for events handled at Operational level
             bool handled = std::visit(
@@ -502,7 +503,7 @@ namespace LaserTracker
                 {
                     using E = std::decay_t<decltype(e)>;
 
-                    if constexpr (std::is_same_v<E, Events::PowerOff>)
+                    if constexpr (std::is_same_v<E, StateCommands::PowerOff>)
                     {
                         state.onExit(); // Exit Operational (which exits sub-state)
                         currentState_ = States::Off{};
@@ -514,30 +515,30 @@ namespace LaserTracker
                         return false;
                     }
                 },
-                event);
+                command);
 
             if (handled)
                 return true;
 
             // Dispatch to sub-state handler
-            return std::visit([this, &state, &event](auto& subState) -> bool { return this->handleOperationalSubEvent(state, subState, event); },
+            return std::visit([this, &state, &command](auto& subState) -> bool { return this->handleOperationalSubCommand(state, subState, command); },
                               state.subState);
         }
 
         // Handle events in Initializing sub-state
-        bool handleOperationalSubEvent(States::Operational& parent, States::Initializing& state, const Event& event)
+        bool handleOperationalSubCommand(States::Operational& parent, States::Initializing& state, const StateCommand& command)
         {
             return std::visit(
                 [this, &parent, &state](const auto& e) -> bool
                 {
                     using E = std::decay_t<decltype(e)>;
 
-                    if constexpr (std::is_same_v<E, Events::InitComplete>)
+                    if constexpr (std::is_same_v<E, StateCommands::InitComplete>)
                     {
                         transitionOperationalTo(parent, States::Idle{});
                         return true;
                     }
-                    else if constexpr (std::is_same_v<E, Events::InitFailed>)
+                    else if constexpr (std::is_same_v<E, StateCommands::InitFailed>)
                     {
                         transitionOperationalTo(parent, States::Error{-1, e.errorReason});
                         return true;
@@ -547,23 +548,23 @@ namespace LaserTracker
                         return false;
                     }
                 },
-                event);
+                command);
         }
 
         // Handle events in Idle sub-state
-        bool handleOperationalSubEvent(States::Operational& parent, States::Idle& /*state*/, const Event& event)
+        bool handleOperationalSubCommand(States::Operational& parent, States::Idle& /*state*/, const StateCommand& command)
         {
             return std::visit(
                 [this, &parent](const auto& e) -> bool
                 {
                     using E = std::decay_t<decltype(e)>;
 
-                    if constexpr (std::is_same_v<E, Events::StartSearch>)
+                    if constexpr (std::is_same_v<E, StateCommands::StartSearch>)
                     {
                         transitionOperationalTo(parent, States::Tracking{});
                         return true;
                     }
-                    else if constexpr (std::is_same_v<E, Events::ErrorOccurred>)
+                    else if constexpr (std::is_same_v<E, StateCommands::ErrorOccurred>)
                     {
                         transitionOperationalTo(parent, States::Error{e.errorCode, e.description});
                         return true;
@@ -573,11 +574,11 @@ namespace LaserTracker
                         return false;
                     }
                 },
-                event);
+                command);
         }
 
         // Handle events in Tracking sub-state (with its own sub-states)
-        bool handleOperationalSubEvent(States::Operational& parent, States::Tracking& state, const Event& event)
+        bool handleOperationalSubCommand(States::Operational& parent, States::Tracking& state, const StateCommand& command)
         {
             // First check for events handled at Tracking level
             bool handled = std::visit(
@@ -585,12 +586,12 @@ namespace LaserTracker
                 {
                     using E = std::decay_t<decltype(e)>;
 
-                    if constexpr (std::is_same_v<E, Events::ReturnToIdle>)
+                    if constexpr (std::is_same_v<E, StateCommands::ReturnToIdle>)
                     {
                         transitionOperationalTo(parent, States::Idle{});
                         return true;
                     }
-                    else if constexpr (std::is_same_v<E, Events::ErrorOccurred>)
+                    else if constexpr (std::is_same_v<E, StateCommands::ErrorOccurred>)
                     {
                         // Exit Tracking (which exits its sub-state)
                         state.onExit();
@@ -603,25 +604,25 @@ namespace LaserTracker
                         return false;
                     }
                 },
-                event);
+                command);
 
             if (handled)
                 return true;
 
             // Dispatch to Tracking sub-state handler
-            return std::visit([this, &parent, &state, &event](auto& subState) -> bool { return this->handleTrackingSubEvent(parent, state, subState, event); },
+            return std::visit([this, &parent, &state, &command](auto& subState) -> bool { return this->handleTrackingSubCommand(parent, state, subState, command); },
                               state.subState);
         }
 
         // Handle events in Error sub-state
-        bool handleOperationalSubEvent(States::Operational& parent, States::Error& /*state*/, const Event& event)
+        bool handleOperationalSubCommand(States::Operational& parent, States::Error& /*state*/, const StateCommand& command)
         {
             return std::visit(
                 [this, &parent](const auto& e) -> bool
                 {
                     using E = std::decay_t<decltype(e)>;
 
-                    if constexpr (std::is_same_v<E, Events::Reset>)
+                    if constexpr (std::is_same_v<E, StateCommands::Reset>)
                     {
                         // Reset goes back to Initializing
                         transitionOperationalTo(parent, States::Initializing{});
@@ -632,18 +633,18 @@ namespace LaserTracker
                         return false;
                     }
                 },
-                event);
+                command);
         }
 
         // Handle events in Searching sub-state
-        bool handleTrackingSubEvent(States::Operational& /*parent*/, States::Tracking& tracking, States::Searching& /*state*/, const Event& event)
+        bool handleTrackingSubCommand(States::Operational& /*parent*/, States::Tracking& tracking, States::Searching& /*state*/, const StateCommand& command)
         {
             return std::visit(
                 [this, &tracking](const auto& e) -> bool
                 {
                     using E = std::decay_t<decltype(e)>;
 
-                    if constexpr (std::is_same_v<E, Events::TargetFound>)
+                    if constexpr (std::is_same_v<E, StateCommands::TargetFound>)
                     {
                         transitionTrackingTo(tracking, States::Locked{e.distance_mm});
                         return true;
@@ -653,23 +654,23 @@ namespace LaserTracker
                         return false;
                     }
                 },
-                event);
+                command);
         }
 
         // Handle events in Locked sub-state
-        bool handleTrackingSubEvent(States::Operational& /*parent*/, States::Tracking& tracking, States::Locked& /*state*/, const Event& event)
+        bool handleTrackingSubCommand(States::Operational& /*parent*/, States::Tracking& tracking, States::Locked& /*state*/, const StateCommand& command)
         {
             return std::visit(
                 [this, &tracking](const auto& e) -> bool
                 {
                     using E = std::decay_t<decltype(e)>;
 
-                    if constexpr (std::is_same_v<E, Events::StartMeasure>)
+                    if constexpr (std::is_same_v<E, StateCommands::StartMeasure>)
                     {
                         transitionTrackingTo(tracking, States::Measuring{});
                         return true;
                     }
-                    else if constexpr (std::is_same_v<E, Events::TargetLost>)
+                    else if constexpr (std::is_same_v<E, StateCommands::TargetLost>)
                     {
                         transitionTrackingTo(tracking, States::Searching{});
                         return true;
@@ -679,28 +680,28 @@ namespace LaserTracker
                         return false;
                     }
                 },
-                event);
+                command);
         }
 
         // Handle events in Measuring sub-state
-        bool handleTrackingSubEvent(States::Operational& /*parent*/, States::Tracking& tracking, States::Measuring& state, const Event& event)
+        bool handleTrackingSubCommand(States::Operational& /*parent*/, States::Tracking& tracking, States::Measuring& state, const StateCommand& command)
         {
             return std::visit(
                 [this, &tracking, &state](const auto& e) -> bool
                 {
                     using E = std::decay_t<decltype(e)>;
 
-                    if constexpr (std::is_same_v<E, Events::MeasurementComplete>)
+                    if constexpr (std::is_same_v<E, StateCommands::MeasurementComplete>)
                     {
                         state.recordMeasurement(e.x, e.y, e.z);
                         return true;
                     }
-                    else if constexpr (std::is_same_v<E, Events::StopMeasure>)
+                    else if constexpr (std::is_same_v<E, StateCommands::StopMeasure>)
                     {
                         transitionTrackingTo(tracking, States::Locked{});
                         return true;
                     }
-                    else if constexpr (std::is_same_v<E, Events::TargetLost>)
+                    else if constexpr (std::is_same_v<E, StateCommands::TargetLost>)
                     {
                         transitionTrackingTo(tracking, States::Searching{});
                         return true;
@@ -710,7 +711,7 @@ namespace LaserTracker
                         return false;
                     }
                 },
-                event);
+                command);
         }
     };
 
@@ -730,7 +731,7 @@ namespace LaserTracker
      *
      * Request fields:
      *   - id: Unique identifier for correlation
-     *   - name: Name of the message (event/command name)
+     *   - name: Name of the command
      *   - params: Parameters for the message
      *   - sync: If true, sender waits for result before processing next
      *   - timeoutMs: Timeout in milliseconds for reply (0 = no timeout)
@@ -750,7 +751,7 @@ namespace LaserTracker
         using TimePoint = std::chrono::time_point<Clock>;
 
         uint64_t    id = 0;            // Unique identifier for correlation
-        std::string name;              // Name of event/command
+        std::string name;              // Name of command
         Json        params;            // Parameters (request) or result data (response)
         bool        sync       = false; // If true, sender waits for completion
         bool        needsReply = false; // If true, a response is expected
@@ -845,7 +846,7 @@ namespace LaserTracker
     };
 
     // ============================================================================
-    // Commands - Non-state-changing actions
+    // ActionCommands - Commands that don't change state (but may be state-restricted)
     // ============================================================================
 
     namespace Commands
@@ -1130,29 +1131,29 @@ namespace LaserTracker
         }
 
         // --------------------------------------------------------------------
-        // Convenience methods for Events (state-changing messages)
+        // Convenience methods for StateCommands (state-changing commands)
         // --------------------------------------------------------------------
 
-        uint64_t sendEventAsync(const Event& event)
+        uint64_t sendStateCommandAsync(const StateCommand& cmd)
         {
-            return sendAsync(getEventName(event), eventToParams(event), false);
+            return sendAsync(getStateCommandName(cmd), stateCommandToParams(cmd), false);
         }
 
-        Message sendEventSync(const Event& event, uint32_t timeoutMs = 5000)
+        Message sendStateCommandSync(const StateCommand& cmd, uint32_t timeoutMs = 5000)
         {
-            return send(getEventName(event), eventToParams(event), false, timeoutMs);
+            return send(getStateCommandName(cmd), stateCommandToParams(cmd), false, timeoutMs);
         }
 
         // --------------------------------------------------------------------
-        // Convenience methods for Commands (may or may not change state)
+        // Convenience methods for ActionCommands (non-state-changing commands)
         // --------------------------------------------------------------------
 
-        uint64_t sendCommandAsync(const Command& cmd)
+        uint64_t sendActionCommandAsync(const Command& cmd)
         {
             return sendAsync(getCommandName(cmd), commandToParams(cmd), isCommandSync(cmd));
         }
 
-        Message sendCommand(const Command& cmd, uint32_t timeoutMs = 30000)
+        Message sendActionCommand(const Command& cmd, uint32_t timeoutMs = 30000)
         {
             return send(getCommandName(cmd), commandToParams(cmd), isCommandSync(cmd), timeoutMs);
         }
@@ -1310,7 +1311,7 @@ namespace LaserTracker
                 syncMessageInProgress_.store(true);
             }
 
-            // Process the message - try as event first, then as command
+            // Process the message - try as state command first, then as action command
             Message response = processMessageContent(msg);
 
             // Send response if needed
@@ -1369,32 +1370,32 @@ namespace LaserTracker
         }
 
         /**
-         * @brief Process a message - determines if it's an event or command
+         * @brief Process a message - determines if it's a state command or action command
          */
         Message processMessageContent(const Message& msg)
         {
-            // First, try to process as an event (state-changing)
-            auto event = paramsToEvent(msg.name, msg.params);
-            if (event)
+            // First, try to process as a state command (state-changing)
+            auto stateCmd = paramsToStateCommand(msg.name, msg.params);
+            if (stateCmd)
             {
-                return processEvent(msg, *event);
+                return processStateCommand(msg, *stateCmd);
             }
 
-            // Otherwise, process as a command
-            return processCommand(msg);
+            // Otherwise, process as an action command
+            return processActionCommand(msg);
         }
 
         // --------------------------------------------------------------------
-        // Event Processing
+        // StateCommand Processing
         // --------------------------------------------------------------------
 
-        Message processEvent(const Message& msg, const Event& event)
+        Message processStateCommand(const Message& msg, const StateCommand& cmd)
         {
-            // Process the event
+            // Process the state command
             bool handled;
             {
                 std::lock_guard<std::mutex> lock(stateMutex_);
-                handled = hsm_.processEvent(event);
+                handled = hsm_.processCommand(cmd);
             }
 
             Json result;
@@ -1404,17 +1405,17 @@ namespace LaserTracker
 
             if (!handled)
             {
-                return Message::createResponse(msg.id, false, result, "Event not handled in current state");
+                return Message::createResponse(msg.id, false, result, "Command not handled in current state");
             }
 
             return Message::createResponse(msg.id, true, result);
         }
 
         // --------------------------------------------------------------------
-        // Command Processing
+        // ActionCommand Processing
         // --------------------------------------------------------------------
 
-        Message processCommand(const Message& msg)
+        Message processActionCommand(const Message& msg)
         {
             // Check if command is valid in current state
             std::string currentState = getCurrentStateName();
@@ -1686,7 +1687,7 @@ namespace LaserTracker
             return std::visit([](const auto& c) { return c.sync; }, cmd);
         }
 
-        static Json eventToParams(const Event& event)
+        static Json stateCommandToParams(const StateCommand& command)
         {
             return std::visit(
                 [](const auto& e) -> Json
@@ -1694,21 +1695,21 @@ namespace LaserTracker
                     using E = std::decay_t<decltype(e)>;
                     Json params = Json::object();
 
-                    if constexpr (std::is_same_v<E, Events::TargetFound>)
+                    if constexpr (std::is_same_v<E, StateCommands::TargetFound>)
                     {
                         params["distance_mm"] = e.distance_mm;
                     }
-                    else if constexpr (std::is_same_v<E, Events::InitFailed>)
+                    else if constexpr (std::is_same_v<E, StateCommands::InitFailed>)
                     {
                         params["errorReason"] = e.errorReason;
                     }
-                    else if constexpr (std::is_same_v<E, Events::MeasurementComplete>)
+                    else if constexpr (std::is_same_v<E, StateCommands::MeasurementComplete>)
                     {
                         params["x"] = e.x;
                         params["y"] = e.y;
                         params["z"] = e.z;
                     }
-                    else if constexpr (std::is_same_v<E, Events::ErrorOccurred>)
+                    else if constexpr (std::is_same_v<E, StateCommands::ErrorOccurred>)
                     {
                         params["errorCode"]   = e.errorCode;
                         params["description"] = e.description;
@@ -1716,7 +1717,7 @@ namespace LaserTracker
 
                     return params;
                 },
-                event);
+                command);
         }
 
         static Json commandToParams(const Command& cmd)
@@ -1752,23 +1753,23 @@ namespace LaserTracker
                 cmd);
         }
 
-        static std::optional<Event> paramsToEvent(const std::string& name, const Json& params)
+        static std::optional<StateCommand> paramsToStateCommand(const std::string& name, const Json& params)
         {
             if (name == "PowerOn" || name.find("PowerOn") != std::string::npos)
             {
-                return Events::PowerOn{};
+                return StateCommands::PowerOn{};
             }
             else if (name == "PowerOff" || name.find("PowerOff") != std::string::npos)
             {
-                return Events::PowerOff{};
+                return StateCommands::PowerOff{};
             }
             else if (name == "InitComplete" || name.find("InitComplete") != std::string::npos)
             {
-                return Events::InitComplete{};
+                return StateCommands::InitComplete{};
             }
             else if (name == "InitFailed" || name.find("InitFailed") != std::string::npos)
             {
-                Events::InitFailed e;
+                StateCommands::InitFailed e;
                 if (params.contains("errorReason"))
                 {
                     e.errorReason = params.at("errorReason").get<std::string>();
@@ -1777,11 +1778,11 @@ namespace LaserTracker
             }
             else if (name == "StartSearch" || name.find("StartSearch") != std::string::npos)
             {
-                return Events::StartSearch{};
+                return StateCommands::StartSearch{};
             }
             else if (name == "TargetFound" || name.find("TargetFound") != std::string::npos)
             {
-                Events::TargetFound e;
+                StateCommands::TargetFound e;
                 if (params.contains("distance_mm"))
                 {
                     e.distance_mm = params.at("distance_mm").get<double>();
@@ -1790,19 +1791,19 @@ namespace LaserTracker
             }
             else if (name == "TargetLost" || name.find("TargetLost") != std::string::npos)
             {
-                return Events::TargetLost{};
+                return StateCommands::TargetLost{};
             }
             else if (name == "StartMeasure" || name.find("StartMeasure") != std::string::npos)
             {
-                return Events::StartMeasure{};
+                return StateCommands::StartMeasure{};
             }
             else if (name == "StopMeasure" || name.find("StopMeasure") != std::string::npos)
             {
-                return Events::StopMeasure{};
+                return StateCommands::StopMeasure{};
             }
             else if (name == "MeasurementComplete" || name.find("MeasurementComplete") != std::string::npos)
             {
-                Events::MeasurementComplete e;
+                StateCommands::MeasurementComplete e;
                 if (params.contains("x"))
                     e.x = params.at("x").get<double>();
                 if (params.contains("y"))
@@ -1813,7 +1814,7 @@ namespace LaserTracker
             }
             else if (name == "ErrorOccurred" || name.find("Error") != std::string::npos)
             {
-                Events::ErrorOccurred e;
+                StateCommands::ErrorOccurred e;
                 if (params.contains("errorCode"))
                     e.errorCode = params.at("errorCode").get<int>();
                 if (params.contains("description"))
@@ -1822,11 +1823,11 @@ namespace LaserTracker
             }
             else if (name == "Reset" || name.find("Reset") != std::string::npos)
             {
-                return Events::Reset{};
+                return StateCommands::Reset{};
             }
             else if (name == "ReturnToIdle" || name.find("ReturnToIdle") != std::string::npos)
             {
-                return Events::ReturnToIdle{};
+                return StateCommands::ReturnToIdle{};
             }
 
             return std::nullopt;

@@ -7,13 +7,14 @@ A C++17 implementation demonstrating the **Hierarchical State Machine (HSM)** pa
 This project showcases modern C++ patterns for implementing complex state machines with:
 
 - **Hierarchical (nested) states** using `std::variant`
-- **Type-safe event handling** with `std::visit`
+- **Type-safe command handling** with `std::visit`
 - **State entry/exit actions** for resource management
 - **Composite states** containing sub-states
-- **Event-driven transitions** with proper action handling
+- **Command-driven transitions** with proper action handling
 - **Dedicated worker thread** for the HSM engine
 - **Galvanic separation** between UI and worker threads
-- **Commands** (non-state-changing actions with state restrictions)
+- **StateCommands** (commands that trigger state transitions)
+- **ActionCommands** (commands that don't change state, may be state-restricted)
 - **JSON message protocol** for inter-thread communication
 - **Synchronous/asynchronous execution** with timeout support
 
@@ -56,11 +57,11 @@ stateDiagram-v2
     }
 ```
 
-## Event Flow
+## Command Flow
 
 ```mermaid
 flowchart LR
-    subgraph Events
+    subgraph StateCommands
         PowerOn([PowerOn])
         PowerOff([PowerOff])
         InitComplete([InitComplete])
@@ -141,12 +142,13 @@ The `ThreadedHSM` class provides complete galvanic separation between the UI/mai
 
 ### Features
 
-- **Dedicated Worker Thread**: HSM runs in its own thread, processing messages from a queue
+- **Dedicated Worker Thread**: HSM runs in its own thread ("LaserTracker HSM Worker"), processing messages from a queue
 - **Thread-Safe State Access**: Query state safely from any thread
 - **Message-Based Communication**: Events and commands sent via thread-safe queue
 - **Synchronous & Asynchronous**: Choose blocking or fire-and-forget message sending
 - **Timeout Support**: Configurable timeouts prevent indefinite blocking
 - **Command Buffering**: Messages queued during sync operations
+- **Debugger-Friendly**: Worker thread is named for easy identification in Visual Studio/debuggers
 
 ### Commands
 
@@ -190,21 +192,22 @@ Messages use a unified JSON format for both requests and responses:
 
 ```cpp
 #include "ThreadedHSM.hpp"
+using namespace LaserTracker;
 
-LaserTracker::ThreadedHSM tracker;
+ThreadedHSM tracker;
 tracker.start();
 
-// Send async event (fire and forget)
-tracker.sendEventAsync(Events::PowerOn{});
+// Send async state command (fire and forget)
+tracker.sendStateCommandAsync(StateCommands::PowerOn{});
 
-// Send sync event and wait for response
-auto response = tracker.sendEventSync(Events::InitComplete{});
+// Send sync state command and wait for response
+auto response = tracker.sendStateCommandSync(StateCommands::InitComplete{});
 
-// Send command and get result
-auto result = tracker.sendCommand(Commands::Home{50.0});
+// Send action command and get result
+auto result = tracker.sendActionCommand(Commands::Home{50.0});
 if (result.success)
 {
-    std::cout << "Home complete: " << result.params.toJson() << "\n";
+    std::cout << "Home complete: " << result.params.dump() << "\n";
 }
 
 tracker.stop();
@@ -228,22 +231,22 @@ using TrackingSubState = std::variant<Searching, Locked, Measuring>;
 - No virtual function overhead
 - Exhaustive pattern matching with `std::visit`
 
-### 2. Event Dispatch with `std::visit`
+### 2. Command Dispatch with `std::visit`
 
 ```cpp
-bool processEvent(const Event& event)
+bool processCommand(const StateCommand& command)
 {
     return std::visit(
-        [this, &event](auto& state) -> bool
+        [this, &command](auto& state) -> bool
         {
-            return this->handleEvent(state, event);
+            return this->handleCommand(state, command);
         },
         currentState_);
 }
 ```
 
 **Benefits:**
-- Type-safe event routing
+- Type-safe command routing
 - Compiler enforces handling all state types
 - Clean separation of concerns
 
@@ -378,6 +381,8 @@ g++ -std=c++17 -pthread -o laser_tracker_hsm main.cpp
 
 ### Interactive Mode Commands
 
+**StateCommands (trigger state changes):**
+
 | Command | Description |
 |---------|-------------|
 | `power_on` | Power on the laser tracker |
@@ -393,22 +398,38 @@ g++ -std=c++17 -pthread -o laser_tracker_hsm main.cpp
 | `idle` | Return to idle state |
 | `error <code>` | Simulate an error |
 | `reset` | Reset from error state |
+
+**ActionCommands (actions with results):**
+
+| Command | Description |
+|---------|-------------|
+| `home [speed]` | Move to home position (Idle only) |
+| `getpos` | Get current position |
+| `power <0-1>` | Set laser power level |
+| `compensate <temp> <pressure> <humidity>` | Apply environmental compensation |
+| `status` | Get system status |
+| `move <az> <el>` | Move relative by azimuth/elevation |
+
+**Utilities:**
+
+| Command | Description |
+|---------|-------------|
 | `state` | Print current state |
 | `help` | Show help |
-| `quit` | Exit |
+| `quit` | Exit interactive mode |
 
 ### Demo Scenarios
 
-1. **Threaded HSM Basic Operation** - Async/sync event sending to worker thread
-2. **Commands with State Restrictions** - Command validation and execution
+1. **Threaded HSM Basic Operation** - Async/sync command sending to worker thread
+2. **ActionCommands with State Restrictions** - Command validation and execution
 3. **Synchronous Command Buffering** - Message queuing during sync operations
 4. **JSON Message Protocol** - Raw JSON message handling
-5. **Multi-threaded Event Sending** - Multiple threads sending events to HSM
+5. **Multi-threaded Command Sending** - Multiple threads sending commands to HSM
 6. **Complete Workflow** - Full laser tracker workflow through all states
 
 ## State Transition Table
 
-| Current State | Event | Next State |
+| Current State | StateCommand | Next State |
 |---------------|-------|------------|
 | Off | PowerOn | Operational::Initializing |
 | Operational::* | PowerOff | Off |
