@@ -86,6 +86,7 @@
 #include <unordered_map>
 #include <variant>
 #include <nlohmann/json.hpp>
+#include "Keywords.hpp"
 
 namespace LaserTracker
 {
@@ -95,6 +96,25 @@ namespace LaserTracker
     // ============================================================================
 
     class HSM;
+
+    // ============================================================================
+    // ExecuteResult - Return type for action command execute() methods
+    // ============================================================================
+
+    /**
+     * @brief Result of an action command execution
+     * Used by action command execute() methods, converted to Message by ThreadedHSM
+     */
+    struct ExecuteResult
+    {
+        bool           success = true;
+        nlohmann::json params  = nlohmann::json::object();
+        std::string    error;
+
+        static ExecuteResult ok(nlohmann::json result = nlohmann::json::object()) { return {true, std::move(result), {}}; }
+
+        static ExecuteResult fail(const std::string& errorMsg) { return {false, nlohmann::json::object(), errorMsg}; }
+    };
 
     // ============================================================================
     // Events - Past tense notifications of what happened (FSM reacts to these)
@@ -119,11 +139,11 @@ namespace LaserTracker
             std::string                  errorReason;
             std::string                  operator()() const { return std::string(name) + ": " + errorReason; }
 
-            friend void to_json(nlohmann::json& j, const InitFailed& e) { j = nlohmann::json{{"errorReason", e.errorReason}}; }
+            friend void to_json(nlohmann::json& j, const InitFailed& e) { j = nlohmann::json{{Keys::ErrorReason, e.errorReason}}; }
             friend void from_json(const nlohmann::json& j, InitFailed& e)
             {
-                if (j.contains("errorReason"))
-                    j.at("errorReason").get_to(e.errorReason);
+                if (j.contains(Keys::ErrorReason))
+                    j.at(Keys::ErrorReason).get_to(e.errorReason);
             }
         };
 
@@ -139,11 +159,11 @@ namespace LaserTracker
                 return oss.str();
             }
 
-            friend void to_json(nlohmann::json& j, const TargetFound& e) { j = nlohmann::json{{"distance_mm", e.distance_mm}}; }
+            friend void to_json(nlohmann::json& j, const TargetFound& e) { j = nlohmann::json{{Keys::DistanceMm, e.distance_mm}}; }
             friend void from_json(const nlohmann::json& j, TargetFound& e)
             {
-                if (j.contains("distance_mm"))
-                    j.at("distance_mm").get_to(e.distance_mm);
+                if (j.contains(Keys::DistanceMm))
+                    j.at(Keys::DistanceMm).get_to(e.distance_mm);
             }
         };
 
@@ -169,15 +189,15 @@ namespace LaserTracker
                 return oss.str();
             }
 
-            friend void to_json(nlohmann::json& j, const MeasurementComplete& e) { j = nlohmann::json{{"x", e.x}, {"y", e.y}, {"z", e.z}}; }
+            friend void to_json(nlohmann::json& j, const MeasurementComplete& e) { j = nlohmann::json{{Keys::X, e.x}, {Keys::Y, e.y}, {Keys::Z, e.z}}; }
             friend void from_json(const nlohmann::json& j, MeasurementComplete& e)
             {
-                if (j.contains("x"))
-                    j.at("x").get_to(e.x);
-                if (j.contains("y"))
-                    j.at("y").get_to(e.y);
-                if (j.contains("z"))
-                    j.at("z").get_to(e.z);
+                if (j.contains(Keys::X))
+                    j.at(Keys::X).get_to(e.x);
+                if (j.contains(Keys::Y))
+                    j.at(Keys::Y).get_to(e.y);
+                if (j.contains(Keys::Z))
+                    j.at(Keys::Z).get_to(e.z);
             }
         };
 
@@ -189,13 +209,13 @@ namespace LaserTracker
             std::string                  description;
             std::string                  operator()() const { return "Error[" + std::to_string(errorCode) + "]: " + description; }
 
-            friend void to_json(nlohmann::json& j, const ErrorOccurred& e) { j = nlohmann::json{{"errorCode", e.errorCode}, {"description", e.description}}; }
+            friend void to_json(nlohmann::json& j, const ErrorOccurred& e) { j = nlohmann::json{{Keys::ErrorCode, e.errorCode}, {Keys::Description, e.description}}; }
             friend void from_json(const nlohmann::json& j, ErrorOccurred& e)
             {
-                if (j.contains("errorCode"))
-                    j.at("errorCode").get_to(e.errorCode);
-                if (j.contains("description"))
-                    j.at("description").get_to(e.description);
+                if (j.contains(Keys::ErrorCode))
+                    j.at(Keys::ErrorCode).get_to(e.errorCode);
+                if (j.contains(Keys::Description))
+                    j.at(Keys::Description).get_to(e.description);
             }
         };
     } // namespace Events
@@ -292,11 +312,28 @@ namespace LaserTracker
             double                       speed = 100.0;
             std::string                  operator()() const { return name; }
 
-            friend void to_json(nlohmann::json& j, const Home& c) { j = nlohmann::json{{"speed", c.speed}}; }
+            friend void to_json(nlohmann::json& j, const Home& c) { j = nlohmann::json{{Keys::Speed, c.speed}}; }
             friend void from_json(const nlohmann::json& j, Home& c)
             {
-                if (j.contains("speed"))
-                    j.at("speed").get_to(c.speed);
+                if (j.contains(Keys::Speed))
+                    j.at(Keys::Speed).get_to(c.speed);
+            }
+
+            ExecuteResult execute(const std::string& currentState) const
+            {
+                if (currentState.find("Idle") == std::string::npos)
+                {
+                    return ExecuteResult::fail("Home command only valid in Idle state (current: " + currentState + ")");
+                }
+
+                std::cout << "  [COMMAND] Home: Moving to home position at " << speed << "% speed\n";
+                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(1000 / (speed / 100.0))));
+                std::cout << "  [COMMAND] Home: Homing complete\n";
+
+                nlohmann::json result;
+                result[Keys::Position][Keys::Azimuth]   = 0.0;
+                result[Keys::Position][Keys::Elevation] = 0.0;
+                return ExecuteResult::ok(result);
             }
         };
 
@@ -309,6 +346,25 @@ namespace LaserTracker
 
             friend void to_json(nlohmann::json& j, const GetPosition&) { j = nlohmann::json::object(); }
             friend void from_json(const nlohmann::json&, GetPosition&) {}
+
+            ExecuteResult execute(const std::string& currentState) const
+            {
+                if (currentState.find("Off") != std::string::npos || currentState.find("Initializing") != std::string::npos ||
+                    currentState.find("Error") != std::string::npos)
+                {
+                    return ExecuteResult::fail("GetPosition not available in " + currentState);
+                }
+
+                nlohmann::json result;
+                result[Keys::Position][Keys::X]         = 1234.567;
+                result[Keys::Position][Keys::Y]         = 2345.678;
+                result[Keys::Position][Keys::Z]         = 345.789;
+                result[Keys::Position][Keys::Azimuth]   = 45.123;
+                result[Keys::Position][Keys::Elevation] = 12.456;
+
+                std::cout << "  [COMMAND] GetPosition: Returned current position\n";
+                return ExecuteResult::ok(result);
+            }
         };
 
         /** @brief SetLaserPower - adjusts laser power. Valid in: Any Operational. Sync: No */
@@ -319,11 +375,30 @@ namespace LaserTracker
             double                       powerLevel = 1.0;
             std::string                  operator()() const { return name; }
 
-            friend void to_json(nlohmann::json& j, const SetLaserPower& c) { j = nlohmann::json{{"powerLevel", c.powerLevel}}; }
+            friend void to_json(nlohmann::json& j, const SetLaserPower& c) { j = nlohmann::json{{Keys::PowerLevel, c.powerLevel}}; }
             friend void from_json(const nlohmann::json& j, SetLaserPower& c)
             {
-                if (j.contains("powerLevel"))
-                    j.at("powerLevel").get_to(c.powerLevel);
+                if (j.contains(Keys::PowerLevel))
+                    j.at(Keys::PowerLevel).get_to(c.powerLevel);
+            }
+
+            ExecuteResult execute(const std::string& currentState) const
+            {
+                if (currentState.find("Off") != std::string::npos)
+                {
+                    return ExecuteResult::fail("SetLaserPower not available when powered off");
+                }
+
+                if (powerLevel < 0.0 || powerLevel > 1.0)
+                {
+                    return ExecuteResult::fail("Power level must be between 0.0 and 1.0");
+                }
+
+                std::cout << "  [COMMAND] SetLaserPower: Set to " << (powerLevel * 100) << "%\n";
+
+                nlohmann::json result;
+                result[Keys::PowerLevel] = powerLevel;
+                return ExecuteResult::ok(result);
             }
         };
 
@@ -339,16 +414,37 @@ namespace LaserTracker
 
             friend void to_json(nlohmann::json& j, const Compensate& c)
             {
-                j = nlohmann::json{{"temperature", c.temperature}, {"pressure", c.pressure}, {"humidity", c.humidity}};
+                j = nlohmann::json{{Keys::Temperature, c.temperature}, {Keys::Pressure, c.pressure}, {Keys::Humidity, c.humidity}};
             }
             friend void from_json(const nlohmann::json& j, Compensate& c)
             {
-                if (j.contains("temperature"))
-                    j.at("temperature").get_to(c.temperature);
-                if (j.contains("pressure"))
-                    j.at("pressure").get_to(c.pressure);
-                if (j.contains("humidity"))
-                    j.at("humidity").get_to(c.humidity);
+                if (j.contains(Keys::Temperature))
+                    j.at(Keys::Temperature).get_to(c.temperature);
+                if (j.contains(Keys::Pressure))
+                    j.at(Keys::Pressure).get_to(c.pressure);
+                if (j.contains(Keys::Humidity))
+                    j.at(Keys::Humidity).get_to(c.humidity);
+            }
+
+            ExecuteResult execute(const std::string& currentState) const
+            {
+                if (currentState.find("Idle") == std::string::npos && currentState.find("Locked") == std::string::npos)
+                {
+                    return ExecuteResult::fail("Compensate only valid in Idle or Locked state");
+                }
+
+                std::cout << "  [COMMAND] Compensate: Applying environmental compensation\n";
+                std::cout << "            T=" << temperature << "C, P=" << pressure << "hPa, H=" << humidity << "%\n";
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+                double factor = 1.0 + ((temperature - 20.0) * 0.000001) + ((pressure - 1013.25) * 0.0000001);
+                std::cout << "  [COMMAND] Compensate: Factor = " << std::fixed << std::setprecision(8) << factor << "\n";
+
+                nlohmann::json result;
+                result[Keys::CompensationFactor] = factor;
+                result[Keys::Applied]            = true;
+                return ExecuteResult::ok(result);
             }
         };
 
@@ -361,6 +457,17 @@ namespace LaserTracker
 
             friend void to_json(nlohmann::json& j, const GetStatus&) { j = nlohmann::json::object(); }
             friend void from_json(const nlohmann::json&, GetStatus&) {}
+
+            ExecuteResult execute(const std::string& currentState) const
+            {
+                nlohmann::json result;
+                result[Keys::State]   = currentState;
+                result[Keys::Healthy] = (currentState.find("Error") == std::string::npos);
+                result[Keys::Powered] = (currentState.find("Off") == std::string::npos);
+
+                std::cout << "  [COMMAND] GetStatus: State=" << currentState << "\n";
+                return ExecuteResult::ok(result);
+            }
         };
 
         /** @brief MoveRelative - moves tracker by relative amount. Valid in: Idle, Locked. Sync: Yes */
@@ -372,13 +479,34 @@ namespace LaserTracker
             double                       elevation = 0.0;
             std::string                  operator()() const { return name; }
 
-            friend void to_json(nlohmann::json& j, const MoveRelative& c) { j = nlohmann::json{{"azimuth", c.azimuth}, {"elevation", c.elevation}}; }
+            friend void to_json(nlohmann::json& j, const MoveRelative& c) { j = nlohmann::json{{Keys::Azimuth, c.azimuth}, {Keys::Elevation, c.elevation}}; }
             friend void from_json(const nlohmann::json& j, MoveRelative& c)
             {
-                if (j.contains("azimuth"))
-                    j.at("azimuth").get_to(c.azimuth);
-                if (j.contains("elevation"))
-                    j.at("elevation").get_to(c.elevation);
+                if (j.contains(Keys::Azimuth))
+                    j.at(Keys::Azimuth).get_to(c.azimuth);
+                if (j.contains(Keys::Elevation))
+                    j.at(Keys::Elevation).get_to(c.elevation);
+            }
+
+            ExecuteResult execute(const std::string& currentState) const
+            {
+                if (currentState.find("Idle") == std::string::npos && currentState.find("Locked") == std::string::npos)
+                {
+                    return ExecuteResult::fail("MoveRelative only valid in Idle or Locked state");
+                }
+
+                std::cout << "  [COMMAND] MoveRelative: Moving by az=" << azimuth << ", el=" << elevation << "\n";
+
+                double moveTime = std::sqrt(azimuth * azimuth + elevation * elevation) * 10;
+                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(moveTime)));
+
+                std::cout << "  [COMMAND] MoveRelative: Move complete\n";
+
+                nlohmann::json result;
+                result[Keys::MovedAz]    = azimuth;
+                result[Keys::MovedEl]    = elevation;
+                result[Keys::MoveTimeMs] = static_cast<int>(moveTime);
+                return ExecuteResult::ok(result);
             }
         };
     } // namespace Commands
@@ -486,8 +614,7 @@ namespace LaserTracker
                 msg);
         }
 
-    private:
-        // C++17-compatible detection of static sync member
+        // C++17-compatible detection of static sync member (public for use in processActionCommand)
         template <typename T, typename = void>
         struct has_sync : std::false_type
         {
@@ -498,6 +625,7 @@ namespace LaserTracker
         {
         };
 
+    private:
         template <typename T>
         static constexpr bool getSyncValue()
         {
@@ -1710,9 +1838,9 @@ namespace LaserTracker
             }
 
             Json result;
-            result["handled"]      = handled;
-            result["state"]        = getCurrentStateName();
-            result["stateChanged"] = handled;
+            result[Keys::Handled]      = handled;
+            result[Keys::State]        = getCurrentStateName();
+            result[Keys::StateChanged] = handled;
 
             if (!handled)
             {
@@ -1723,206 +1851,38 @@ namespace LaserTracker
         }
 
         // --------------------------------------------------------------------
-        // Action Command Processing
+        // Action Command Processing - Uses std::visit with execute() member
         // --------------------------------------------------------------------
 
         Message processActionCommand(const Message& msg)
         {
-            // Check if command is valid in current state
-            std::string currentState = getCurrentStateName();
-
-            // Execute command based on name
-            if (msg.name == Commands::Home::name)
-            {
-                return executeHome(msg, currentState);
-            }
-            else if (msg.name == Commands::GetPosition::name)
-            {
-                return executeGetPosition(msg, currentState);
-            }
-            else if (msg.name == Commands::SetLaserPower::name)
-            {
-                return executeSetLaserPower(msg, currentState);
-            }
-            else if (msg.name == Commands::Compensate::name)
-            {
-                return executeCompensate(msg, currentState);
-            }
-            else if (msg.name == Commands::GetStatus::name)
-            {
-                return executeGetStatus(msg, currentState);
-            }
-            else if (msg.name == Commands::MoveRelative::name)
-            {
-                return executeMoveRelative(msg, currentState);
-            }
-            else
+            // Parse the action command from JSON using the registry
+            auto actionCmd = StateMessageRegistry::fromJson(msg.name, msg.params);
+            if (!actionCmd)
             {
                 return Message::createResponse(msg.id, false, {}, "Unknown message: " + msg.name);
             }
-        }
 
-        // --------------------------------------------------------------------
-        // Command Executors
-        // --------------------------------------------------------------------
+            std::string currentState = getCurrentStateName();
 
-        Message executeHome(const Message& msg, const std::string& currentState)
-        {
-            // Home is only valid in Idle state
-            if (currentState.find("Idle") == std::string::npos)
-            {
-                return Message::createResponse(msg.id, false, {}, "Home command only valid in Idle state (current: " + currentState + ")");
-            }
-
-            double speed = 100.0;
-            if (msg.params.contains("speed"))
-            {
-                speed = msg.params.at("speed").get<double>();
-            }
-
-            std::cout << "  [COMMAND] Home: Moving to home position at " << speed << "% speed\n";
-
-            // Simulate homing operation (sync)
-            std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(1000 / (speed / 100.0))));
-
-            std::cout << "  [COMMAND] Home: Homing complete\n";
-
-            Json result;
-            result["position"]["azimuth"]   = 0.0;
-            result["position"]["elevation"] = 0.0;
-            result["state"] = getCurrentStateName();
-
-            return Message::createResponse(msg.id, true, result);
-        }
-
-        Message executeGetPosition(const Message& msg, const std::string& currentState)
-        {
-            // GetPosition valid in Idle, Locked, Measuring
-            if (currentState.find("Off") != std::string::npos || currentState.find("Initializing") != std::string::npos ||
-                currentState.find("Error") != std::string::npos)
-            {
-                return Message::createResponse(msg.id, false, {}, "GetPosition not available in " + currentState);
-            }
-
-            // Simulate reading position
-            Json result;
-            result["position"]["x"]         = 1234.567;
-            result["position"]["y"]         = 2345.678;
-            result["position"]["z"]         = 345.789;
-            result["position"]["azimuth"]   = 45.123;
-            result["position"]["elevation"] = 12.456;
-
-            std::cout << "  [COMMAND] GetPosition: Returned current position\n";
-
-            return Message::createResponse(msg.id, true, result);
-        }
-
-        Message executeSetLaserPower(const Message& msg, const std::string& currentState)
-        {
-            // SetLaserPower valid in any Operational state
-            if (currentState.find("Off") != std::string::npos)
-            {
-                return Message::createResponse(msg.id, false, {}, "SetLaserPower not available when powered off");
-            }
-
-            double power = 1.0;
-            if (msg.params.contains("powerLevel"))
-            {
-                power = msg.params.at("powerLevel").get<double>();
-            }
-
-            if (power < 0.0 || power > 1.0)
-            {
-                return Message::createResponse(msg.id, false, {}, "Power level must be between 0.0 and 1.0");
-            }
-
-            std::cout << "  [COMMAND] SetLaserPower: Set to " << (power * 100) << "%\n";
-
-            Json result;
-            result["powerLevel"] = power;
-
-            return Message::createResponse(msg.id, true, result);
-        }
-
-        Message executeCompensate(const Message& msg, const std::string& currentState)
-        {
-            // Compensate valid in Idle, Locked
-            if (currentState.find("Idle") == std::string::npos && currentState.find("Locked") == std::string::npos)
-            {
-                return Message::createResponse(msg.id, false, {}, "Compensate only valid in Idle or Locked state");
-            }
-
-            double temp     = 20.0;
-            double pressure = 1013.25;
-            double humidity = 50.0;
-
-            if (msg.params.contains("temperature"))
-                temp = msg.params.at("temperature").get<double>();
-            if (msg.params.contains("pressure"))
-                pressure = msg.params.at("pressure").get<double>();
-            if (msg.params.contains("humidity"))
-                humidity = msg.params.at("humidity").get<double>();
-
-            std::cout << "  [COMMAND] Compensate: Applying environmental compensation\n";
-            std::cout << "            T=" << temp << "C, P=" << pressure << "hPa, H=" << humidity << "%\n";
-
-            // Simulate calculation (sync)
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-            // Calculate compensation factor (simplified)
-            double factor = 1.0 + ((temp - 20.0) * 0.000001) + ((pressure - 1013.25) * 0.0000001);
-
-            std::cout << "  [COMMAND] Compensate: Factor = " << std::fixed << std::setprecision(8) << factor << "\n";
-
-            Json result;
-            result["compensationFactor"] = factor;
-            result["applied"]            = true;
-
-            return Message::createResponse(msg.id, true, result);
-        }
-
-        Message executeGetStatus(const Message& msg, const std::string& currentState)
-        {
-            Json result;
-            result["state"]   = currentState;
-            result["healthy"] = (currentState.find("Error") == std::string::npos);
-            result["powered"] = (currentState.find("Off") == std::string::npos);
-
-            std::cout << "  [COMMAND] GetStatus: State=" << currentState << "\n";
-
-            return Message::createResponse(msg.id, true, result);
-        }
-
-        Message executeMoveRelative(const Message& msg, const std::string& currentState)
-        {
-            // MoveRelative valid in Idle, Locked
-            if (currentState.find("Idle") == std::string::npos && currentState.find("Locked") == std::string::npos)
-            {
-                return Message::createResponse(msg.id, false, {}, "MoveRelative only valid in Idle or Locked state");
-            }
-
-            double azimuth   = 0.0;
-            double elevation = 0.0;
-
-            if (msg.params.contains("azimuth"))
-                azimuth = msg.params.at("azimuth").get<double>();
-            if (msg.params.contains("elevation"))
-                elevation = msg.params.at("elevation").get<double>();
-
-            std::cout << "  [COMMAND] MoveRelative: Moving by az=" << azimuth << ", el=" << elevation << "\n";
-
-            // Simulate move (sync)
-            double moveTime = std::sqrt(azimuth * azimuth + elevation * elevation) * 10;
-            std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(moveTime)));
-
-            std::cout << "  [COMMAND] MoveRelative: Move complete\n";
-
-            Json result;
-            result["movedAz"]    = azimuth;
-            result["movedEl"]    = elevation;
-            result["moveTimeMs"] = static_cast<int>(moveTime);
-
-            return Message::createResponse(msg.id, true, result);
+            // Use std::visit to dispatch to the command's execute() method
+            return std::visit(
+                [&](const auto& cmd) -> Message
+                {
+                    using T = std::decay_t<decltype(cmd)>;
+                    if constexpr (StateMessageRegistry::template has_sync<T>::value)
+                    {
+                        // It's an action command - call its execute() method
+                        ExecuteResult result = cmd.execute(currentState);
+                        return Message::createResponse(msg.id, result.success, result.params, result.error);
+                    }
+                    else
+                    {
+                        // Not an action command (Event or state-changing Command)
+                        return Message::createResponse(msg.id, false, {}, "Not an action command: " + msg.name);
+                    }
+                },
+                *actionCmd);
         }
 
         // --------------------------------------------------------------------

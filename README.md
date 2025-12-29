@@ -462,6 +462,56 @@ using StateMessageRegistry = MessageRegistry<Events::..., Commands::...>;
 - Action commands filtered using existing `has_sync` trait (no separate registry needed)
 - `std::visit` handles dispatch after variant construction
 
+### 9. Self-Executing Commands with execute() Member
+
+Action commands have an `execute()` method that encapsulates their logic:
+
+```cpp
+struct Home
+{
+    static constexpr const char* name = "Home";
+    static constexpr bool sync = true;
+    double speed = 100.0;
+
+    ExecuteResult execute(const std::string& currentState) const
+    {
+        if (currentState.find("Idle") == std::string::npos)
+        {
+            return ExecuteResult::fail("Home only valid in Idle state");
+        }
+        // ... perform homing ...
+        return ExecuteResult::ok({{"position", {{"azimuth", 0.0}, {"elevation", 0.0}}}});
+    }
+};
+```
+
+The dispatcher uses `std::visit` to call the appropriate `execute()` method:
+
+```cpp
+Message processActionCommand(const Message& msg)
+{
+    auto actionCmd = StateMessageRegistry::fromJson(msg.name, msg.params);
+    return std::visit(
+        [&](const auto& cmd) -> Message
+        {
+            using T = std::decay_t<decltype(cmd)>;
+            if constexpr (has_sync<T>::value)  // Action commands have sync member
+            {
+                ExecuteResult result = cmd.execute(currentState);
+                return Message::createResponse(msg.id, result.success, result.params, result.error);
+            }
+            // ...
+        },
+        *actionCmd);
+}
+```
+
+**Benefits:**
+- Each command is self-contained (name, params, validation, execution logic)
+- Adding a new command = implement one struct with `execute()`
+- No if-else chains in dispatcher
+- Type-safe dispatch via `std::visit`
+
 ## Building the Project
 
 ### Requirements
@@ -575,6 +625,7 @@ g++ -std=c++17 -pthread -o laser_tracker_hsm main.cpp
 ```
 StateMachine/
 ├── CMakeLists.txt        # CMake build configuration
+├── Keywords.hpp          # Compile-time string constants for JSON keys
 ├── ThreadedHSM.hpp       # Complete HSM with threading, events/commands & JSON messaging
 ├── main.cpp              # Demo application
 ├── tests/
@@ -599,6 +650,8 @@ StateMachine/
 9. **Industry-Standard JSON**: Uses nlohmann/json for robust JSON parsing and serialization
 10. **Type Registry Pattern**: Single `MessageRegistry` template eliminates manual if-else chains for JSON↔variant conversion using fold expressions; action commands filtered via `has_sync` trait
 11. **ADL Serialization**: Each message type has `to_json`/`from_json` friend functions for automatic nlohmann/json integration
+12. **Self-Executing Commands**: Action commands have an `execute()` method - the command struct contains all logic (validation, execution, result). Dispatcher uses `std::visit` to call it.
+13. **Compile-Time String Constants**: All JSON keys defined in `Keywords.hpp` as `inline constexpr` - no runtime string allocation, single point of definition, type-safe refactoring.
 
 ## References
 
