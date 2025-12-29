@@ -106,28 +106,23 @@ namespace LaserTracker
         {
             std::string operator()() const { return "PowerOn"; }
         };
-
         struct PowerOff
         {
             std::string operator()() const { return "PowerOff"; }
         };
-
         struct InitComplete
         {
             std::string operator()() const { return "InitComplete"; }
         };
-
         struct InitFailed
         {
             std::string errorReason;
             std::string operator()() const { return "InitFailed: " + errorReason; }
         };
-
         struct StartSearch
         {
             std::string operator()() const { return "StartSearch"; }
         };
-
         struct TargetFound
         {
             double      distance_mm;
@@ -138,22 +133,18 @@ namespace LaserTracker
                 return oss.str();
             }
         };
-
         struct TargetLost
         {
             std::string operator()() const { return "TargetLost"; }
         };
-
         struct StartMeasure
         {
             std::string operator()() const { return "StartMeasure"; }
         };
-
         struct StopMeasure
         {
             std::string operator()() const { return "StopMeasure"; }
         };
-
         struct MeasurementComplete
         {
             double      x, y, z;
@@ -164,19 +155,16 @@ namespace LaserTracker
                 return oss.str();
             }
         };
-
         struct ErrorOccurred
         {
             int         errorCode;
             std::string description;
             std::string operator()() const { return "Error[" + std::to_string(errorCode) + "]: " + description; }
         };
-
         struct Reset
         {
             std::string operator()() const { return "Reset"; }
         };
-
         struct ReturnToIdle
         {
             std::string operator()() const { return "ReturnToIdle"; }
@@ -208,48 +196,35 @@ namespace LaserTracker
         struct Off
         {
             static constexpr const char* name = "Off";
-
             void onEntry() const { std::cout << "  [ENTRY] Off: Laser tracker powered down\n"; }
-
             void onExit() const { std::cout << "  [EXIT] Off: Preparing for power up\n"; }
         };
-
         struct Initializing
         {
             static constexpr const char* name     = "Initializing";
             int                          progress = 0;
-
             void onEntry() const { std::cout << "  [ENTRY] Initializing: Starting self-test and calibration\n"; }
-
             void onExit() const { std::cout << "  [EXIT] Initializing: Self-test complete\n"; }
-
             void updateProgress(int p)
             {
                 progress = p;
                 std::cout << "  [ACTION] Initialization progress: " << progress << "%\n";
             }
         };
-
         struct Idle
         {
             static constexpr const char* name = "Idle";
-
             void onEntry() const { std::cout << "  [ENTRY] Idle: Ready for operation, laser standby\n"; }
-
             void onExit() const { std::cout << "  [EXIT] Idle: Activating laser systems\n"; }
         };
-
         struct Error
         {
             static constexpr const char* name      = "Error";
             int                          errorCode = 0;
             std::string                  description;
-
             Error() = default;
             Error(int code, std::string desc) : errorCode(code), description(std::move(desc)) {}
-
             void onEntry() const { std::cout << "  [ENTRY] Error: System error detected - Code " << errorCode << ": " << description << "\n"; }
-
             void onExit() const { std::cout << "  [EXIT] Error: Error cleared, resuming operation\n"; }
         };
 
@@ -261,41 +236,30 @@ namespace LaserTracker
         {
             static constexpr const char* name        = "Searching";
             double                       searchAngle = 0.0;
-
             void onEntry() const { std::cout << "  [ENTRY] Searching: Scanning for retroreflector target\n"; }
-
             void onExit() const { std::cout << "  [EXIT] Searching: Target acquisition complete\n"; }
-
             void updateSearchAngle(double angle)
             {
                 searchAngle = angle;
                 std::cout << "  [ACTION] Search angle: " << std::fixed << std::setprecision(1) << searchAngle << " degrees\n";
             }
         };
-
         struct Locked
         {
             static constexpr const char* name              = "Locked";
             double                       targetDistance_mm = 0.0;
-
             Locked()                                       = default;
             explicit Locked(double dist) : targetDistance_mm(dist) {}
-
             void onEntry() const { std::cout << "  [ENTRY] Locked: Target acquired at " << std::fixed << std::setprecision(3) << targetDistance_mm << " mm\n"; }
-
             void onExit() const { std::cout << "  [EXIT] Locked: Transitioning tracking mode\n"; }
         };
-
         struct Measuring
         {
             static constexpr const char* name             = "Measuring";
             int                          measurementCount = 0;
             double                       lastX = 0.0, lastY = 0.0, lastZ = 0.0;
-
             void onEntry() const { std::cout << "  [ENTRY] Measuring: Starting precision measurement\n"; }
-
             void onExit() const { std::cout << "  [EXIT] Measuring: Measurement session ended (" << measurementCount << " points recorded)\n"; }
-
             void recordMeasurement(double x, double y, double z)
             {
                 lastX = x;
@@ -322,24 +286,18 @@ namespace LaserTracker
         {
             static constexpr const char* name = "Tracking";
             TrackingSubState             subState;
-
             Tracking() : subState(Searching{}) {}
             explicit Tracking(TrackingSubState sub) : subState(std::move(sub)) {}
-
             void onEntry() const
             {
                 std::cout << "  [ENTRY] Tracking: Entering tracking mode\n";
-                // Also enter the initial sub-state
                 std::visit([](const auto& s) { s.onEntry(); }, subState);
             }
-
             void onExit() const
             {
-                // Exit the current sub-state first
                 std::visit([](const auto& s) { s.onExit(); }, subState);
                 std::cout << "  [EXIT] Tracking: Leaving tracking mode\n";
             }
-
             std::string getSubStateName() const
             {
                 return std::visit([](const auto& s) -> std::string { return s.name; }, subState);
@@ -358,22 +316,18 @@ namespace LaserTracker
         {
             static constexpr const char* name = "Operational";
             OperationalSubState          subState;
-
             Operational() : subState(Initializing{}) {}
             explicit Operational(OperationalSubState sub) : subState(std::move(sub)) {}
-
             void onEntry() const
             {
                 std::cout << "  [ENTRY] Operational: System powered on\n";
                 std::visit([](const auto& s) { s.onEntry(); }, subState);
             }
-
             void onExit() const
             {
                 std::visit([](const auto& s) { s.onExit(); }, subState);
                 std::cout << "  [EXIT] Operational: Shutting down systems\n";
             }
-
             std::string getSubStateName() const
             {
                 return std::visit(
@@ -392,7 +346,6 @@ namespace LaserTracker
                     subState);
             }
         };
-
     } // namespace States
 
     // Top-level state variant
@@ -897,96 +850,55 @@ namespace LaserTracker
 
     namespace Commands
     {
-        /**
-         * @brief Home command - moves laser tracker to home position
-         * Valid in: Idle state
-         * Sync: Yes (waits for homing to complete)
-         */
+        /** @brief Home - moves to home position. Valid in: Idle. Sync: Yes */
         struct Home
         {
             static constexpr const char* name = "Home";
             static constexpr bool        sync = true;
-
-            // Parameters
-            double speed = 100.0; // Homing speed percentage (0-100)
-
+            double speed = 100.0;
             std::string getName() const { return name; }
         };
-
-        /**
-         * @brief GetPosition command - retrieves current position
-         * Valid in: Idle, Locked, Measuring states
-         * Sync: No (returns immediately with current position)
-         */
+        /** @brief GetPosition - retrieves current position. Valid in: Idle, Locked, Measuring. Sync: No */
         struct GetPosition
         {
             static constexpr const char* name = "GetPosition";
             static constexpr bool        sync = false;
-
             std::string getName() const { return name; }
         };
-
-        /**
-         * @brief SetLaserPower command - adjusts laser power
-         * Valid in: Any Operational state
-         * Sync: No
-         */
+        /** @brief SetLaserPower - adjusts laser power. Valid in: Any Operational. Sync: No */
         struct SetLaserPower
         {
             static constexpr const char* name = "SetLaserPower";
             static constexpr bool        sync = false;
-
-            double powerLevel = 1.0; // 0.0 to 1.0
-
+            double powerLevel = 1.0;
             std::string getName() const { return name; }
         };
-
-        /**
-         * @brief Compensate command - applies environmental compensation
-         * Valid in: Idle, Locked states
-         * Sync: Yes (waits for compensation calculation)
-         */
+        /** @brief Compensate - applies environmental compensation. Valid in: Idle, Locked. Sync: Yes */
         struct Compensate
         {
             static constexpr const char* name = "Compensate";
             static constexpr bool        sync = true;
-
-            double temperature = 20.0; // Celsius
-            double pressure    = 1013.25; // hPa
-            double humidity    = 50.0; // Percentage
-
+            double temperature = 20.0;
+            double pressure    = 1013.25;
+            double humidity    = 50.0;
             std::string getName() const { return name; }
         };
-
-        /**
-         * @brief GetStatus command - retrieves system status
-         * Valid in: Any state
-         * Sync: No
-         */
+        /** @brief GetStatus - retrieves system status. Valid in: Any. Sync: No */
         struct GetStatus
         {
             static constexpr const char* name = "GetStatus";
             static constexpr bool        sync = false;
-
             std::string getName() const { return name; }
         };
-
-        /**
-         * @brief MoveRelative command - moves tracker by relative amount
-         * Valid in: Idle, Locked states
-         * Sync: Yes (waits for move to complete)
-         */
+        /** @brief MoveRelative - moves tracker by relative amount. Valid in: Idle, Locked. Sync: Yes */
         struct MoveRelative
         {
             static constexpr const char* name = "MoveRelative";
             static constexpr bool        sync = true;
-
-            double azimuth   = 0.0; // Degrees
-            double elevation = 0.0; // Degrees
-
+            double azimuth   = 0.0;
+            double elevation = 0.0;
             std::string getName() const { return name; }
         };
-
     } // namespace Commands
 
     // Command variant - all possible commands
