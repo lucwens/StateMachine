@@ -436,28 +436,30 @@ struct MessageRegistry
         return result;
     }
 
+    // Same as fromJson, but excludes action commands (those with static `sync` member)
+    static std::optional<Variant> fromJsonStateChanging(const std::string& name, const Json& params)
+    {
+        std::optional<Variant> result;
+        (tryParseTypeExcludeActions<Types>(name, params, result) || ...);
+        return result;
+    }
+
     // variant → JSON: uses std::visit with to_json ADL
     static Json toJson(const Variant& msg)
     {
         return std::visit([](const auto& m) -> Json { return m; }, msg);
     }
-
-    // Get static name from variant
-    static std::string getName(const Variant& msg)
-    {
-        return std::visit([](const auto& m) -> std::string { return m.name; }, msg);
-    }
 };
 
-// Two registries: all messages vs state-changing only
+// Single registry for all message types
 using StateMessageRegistry = MessageRegistry<Events::..., Commands::...>;
-using StateChangingMessageRegistry = MessageRegistry<Events::..., /* no action commands */>;
 ```
 
 **Benefits:**
 - No manual if-else chains for JSON parsing
 - Adding new message types is automatic (just include in variant)
 - Compile-time type safety with runtime name lookup
+- Action commands filtered using existing `has_sync` trait (no separate registry needed)
 - `std::visit` handles dispatch after variant construction
 
 ## Building the Project
@@ -595,7 +597,7 @@ StateMachine/
 7. **Flat Variant Design**: Single `StateMessage` variant contains all types directly - no nested variants, no if/else dispatch
 8. **Uniform API**: `sendMessage()` works for both Events and Commands - namespace distinction provides semantics, processing is uniform
 9. **Industry-Standard JSON**: Uses nlohmann/json for robust JSON parsing and serialization
-10. **Type Registry Pattern**: `MessageRegistry` template eliminates manual if-else chains for JSON↔variant conversion using fold expressions
+10. **Type Registry Pattern**: Single `MessageRegistry` template eliminates manual if-else chains for JSON↔variant conversion using fold expressions; action commands filtered via `has_sync` trait
 11. **ADL Serialization**: Each message type has `to_json`/`from_json` friend functions for automatic nlohmann/json integration
 
 ## References

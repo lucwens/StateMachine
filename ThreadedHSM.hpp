@@ -438,6 +438,19 @@ namespace LaserTracker
         }
 
         /**
+         * @brief Convert JSON to StateMessage, excluding action commands
+         * Action commands (those with static `sync` member) are filtered out.
+         * Used by paramsToStateMessage for HSM dispatch.
+         */
+        static std::optional<Variant> fromJsonStateChanging(const std::string& name, const nlohmann::json& params)
+        {
+            std::optional<Variant> result;
+            // Fold expression: try each type, skipping action commands
+            (tryParseTypeExcludeActions<Types>(name, params, result) || ...);
+            return result;
+        }
+
+        /**
          * @brief Convert a StateMessage variant to JSON params
          * @param msg The StateMessage to convert
          * @return JSON object containing the message parameters
@@ -517,9 +530,27 @@ namespace LaserTracker
             }
             return false; // Continue to next type
         }
+
+        /**
+         * @brief Try to parse JSON into a specific type, excluding action commands
+         * Action commands have a static `sync` member; Events and state-changing Commands don't
+         */
+        template <typename T>
+        static bool tryParseTypeExcludeActions(const std::string& name, const nlohmann::json& params, std::optional<Variant>& out)
+        {
+            // Skip action commands (they have a sync member)
+            if constexpr (has_sync<T>::value)
+            {
+                return false; // Continue to next type
+            }
+            else
+            {
+                return tryParseType<T>(name, params, out);
+            }
+        }
     };
 
-    // Registry with all StateMessage types (for serialization/deserialization)
+    // Single registry with all StateMessage types
     using StateMessageRegistry = MessageRegistry<
         // Events
         Events::InitComplete, Events::InitFailed, Events::TargetFound, Events::TargetLost, Events::MeasurementComplete, Events::ErrorOccurred,
@@ -527,15 +558,6 @@ namespace LaserTracker
         Commands::PowerOn, Commands::PowerOff, Commands::StartSearch, Commands::StartMeasure, Commands::StopMeasure, Commands::Reset, Commands::ReturnToIdle,
         // Action Commands
         Commands::Home, Commands::GetPosition, Commands::SetLaserPower, Commands::Compensate, Commands::GetStatus, Commands::MoveRelative>;
-
-    // Registry for state-changing messages only (Events + state-changing Commands)
-    // Used by paramsToStateMessage to determine if a message should be processed by the HSM
-    // Action Commands (Home, GetPosition, etc.) are handled separately by processActionCommand
-    using StateChangingMessageRegistry = MessageRegistry<
-        // Events
-        Events::InitComplete, Events::InitFailed, Events::TargetFound, Events::TargetLost, Events::MeasurementComplete, Events::ErrorOccurred,
-        // State-changing Commands only
-        Commands::PowerOn, Commands::PowerOff, Commands::StartSearch, Commands::StartMeasure, Commands::StopMeasure, Commands::Reset, Commands::ReturnToIdle>;
 
     // ============================================================================
     // States - Hierarchical state definitions using nested variants
@@ -1980,18 +2002,12 @@ namespace LaserTracker
 
         /**
          * @brief Parse message name/params into a StateMessage (Events or state-changing Commands only)
-         * Delegates to StateChangingMessageRegistry::fromJson() which uses the from_json() ADL functions
-         * Note: Action commands (Home, GetPosition, etc.) are NOT parsed here - they're handled by processActionCommand
+         * Uses fromJsonStateChanging() which filters out action commands (those with static `sync` member)
+         * Action commands (Home, GetPosition, etc.) are handled separately by processActionCommand
          */
         static std::optional<StateMessage> paramsToStateMessage(const std::string& name, const Json& params)
         {
-            auto result = StateChangingMessageRegistry::fromJson(name, params);
-            if (!result)
-            {
-                return std::nullopt;
-            }
-            // Convert from the smaller variant to StateMessage using std::visit
-            return std::visit([](auto&& msg) -> StateMessage { return msg; }, *result);
+            return StateMessageRegistry::fromJsonStateChanging(name, params);
         }
 
         static Message parseJsonMessage(const std::string& jsonStr)
