@@ -651,7 +651,7 @@ StateMachine/
 10. **Type Registry Pattern**: Single `MessageRegistry` template eliminates manual if-else chains for JSON↔variant conversion using fold expressions; action commands filtered via `has_sync` trait
 11. **ADL Serialization**: Each message type has `to_json`/`from_json` friend functions for automatic nlohmann/json integration
 12. **Self-Executing Commands**: Action commands have an `execute()` method - the command struct contains all logic (validation, execution, result). Dispatcher uses `std::visit` to call it.
-13. **Compile-Time String Constants**: All JSON keys defined in `Keywords.hpp` as `inline constexpr` - no runtime string allocation, single point of definition, type-safe refactoring.
+13. **Compile-Time String Constants**: All JSON keys defined in `Keywords.hpp` as `inline constexpr` (position, state, command params, event params, results, message protocol) - no runtime string allocation, single point of definition, type-safe refactoring.
 
 ## References
 
