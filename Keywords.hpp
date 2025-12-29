@@ -50,5 +50,18 @@ namespace LaserTracker
         inline constexpr const char* MovedEl            = "movedEl";
         inline constexpr const char* MoveTimeMs         = "moveTimeMs";
 
+        // Message protocol keys
+        inline constexpr const char* Id          = "id";
+        inline constexpr const char* Name        = "name";
+        inline constexpr const char* TimestampMs = "timestamp_ms";
+        inline constexpr const char* IsResponse  = "isResponse";
+        inline constexpr const char* Success     = "success";
+        inline constexpr const char* Result      = "result";
+        inline constexpr const char* Error       = "error";
+        inline constexpr const char* Params      = "params";
+        inline constexpr const char* Sync        = "sync";
+        inline constexpr const char* TimeoutMs   = "timeoutMs";
+        inline constexpr const char* NeedsReply  = "needsReply";
+
     } // namespace Keys
 } // namespace LaserTracker

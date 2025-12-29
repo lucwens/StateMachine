@@ -1324,25 +1324,25 @@ namespace LaserTracker
         std::string toJson() const
         {
             Json obj;
-            obj["id"]           = id;
-            obj["name"]         = name;
-            obj["timestamp_ms"] = ageMs();
+            obj[Keys::Id]          = id;
+            obj[Keys::Name]        = name;
+            obj[Keys::TimestampMs] = ageMs();
 
             if (isResponse)
             {
-                obj["isResponse"] = true;
-                obj["success"]    = success;
-                obj["result"]     = params;
+                obj[Keys::IsResponse] = true;
+                obj[Keys::Success]    = success;
+                obj[Keys::Result]     = params;
                 if (!error.empty())
                 {
-                    obj["error"] = error;
+                    obj[Keys::Error] = error;
                 }
             }
             else
             {
-                obj["params"]    = params;
-                obj["sync"]      = sync;
-                obj["timeoutMs"] = timeoutMs;
+                obj[Keys::Params]    = params;
+                obj[Keys::Sync]      = sync;
+                obj[Keys::TimeoutMs] = timeoutMs;
             }
             return obj.dump();
         }
@@ -1978,38 +1978,38 @@ namespace LaserTracker
             {
                 Json json = Json::parse(jsonStr);
 
-                if (json.contains("id") && json["id"].is_number())
+                if (json.contains(Keys::Id) && json[Keys::Id].is_number())
                 {
-                    msg.id = json["id"].get<uint64_t>();
+                    msg.id = json[Keys::Id].get<uint64_t>();
                 }
 
-                if (json.contains("name") && json["name"].is_string())
+                if (json.contains(Keys::Name) && json[Keys::Name].is_string())
                 {
-                    msg.name = json["name"].get<std::string>();
+                    msg.name = json[Keys::Name].get<std::string>();
                 }
 
-                if (json.contains("params"))
+                if (json.contains(Keys::Params))
                 {
-                    msg.params = json["params"];
+                    msg.params = json[Keys::Params];
                 }
 
-                if (json.contains("sync") && json["sync"].is_boolean())
+                if (json.contains(Keys::Sync) && json[Keys::Sync].is_boolean())
                 {
-                    msg.sync = json["sync"].get<bool>();
+                    msg.sync = json[Keys::Sync].get<bool>();
                 }
 
-                if (json.contains("needsReply") && json["needsReply"].is_boolean())
+                if (json.contains(Keys::NeedsReply) && json[Keys::NeedsReply].is_boolean())
                 {
-                    msg.needsReply = json["needsReply"].get<bool>();
+                    msg.needsReply = json[Keys::NeedsReply].get<bool>();
                 }
                 else
                 {
                     msg.needsReply = msg.sync;
                 }
 
-                if (json.contains("timeoutMs") && json["timeoutMs"].is_number())
+                if (json.contains(Keys::TimeoutMs) && json[Keys::TimeoutMs].is_number())
                 {
-                    msg.timeoutMs = json["timeoutMs"].get<uint32_t>();
+                    msg.timeoutMs = json[Keys::TimeoutMs].get<uint32_t>();
                 }
             }
             catch (const Json::parse_error& e)
