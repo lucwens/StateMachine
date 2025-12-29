@@ -25,12 +25,12 @@ TEST_F(HSMTest, InitialStateIsOff)
 }
 
 // ============================================================================
-// PowerOn/PowerOff Tests
+// PowerOn/PowerOff Tests (Commands)
 // ============================================================================
 
 TEST_F(HSMTest, PowerOnTransitionsToOperationalInitializing)
 {
-    bool handled = hsm.processCommand(StateCommands::PowerOn{});
+    bool handled = hsm.processMessage(Commands::PowerOn{});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Initializing");
     EXPECT_TRUE(hsm.isInState<States::Operational>());
@@ -38,8 +38,8 @@ TEST_F(HSMTest, PowerOnTransitionsToOperationalInitializing)
 
 TEST_F(HSMTest, PowerOffFromOperationalTransitionsToOff)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    bool handled = hsm.processCommand(StateCommands::PowerOff{});
+    hsm.processMessage(Commands::PowerOn{});
+    bool handled = hsm.processMessage(Commands::PowerOff{});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Off");
     EXPECT_TRUE(hsm.isInState<States::Off>());
@@ -47,40 +47,40 @@ TEST_F(HSMTest, PowerOffFromOperationalTransitionsToOff)
 
 TEST_F(HSMTest, PowerOnIgnoredWhenAlreadyOperational)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    bool handled = hsm.processCommand(StateCommands::PowerOn{});
+    hsm.processMessage(Commands::PowerOn{});
+    bool handled = hsm.processMessage(Commands::PowerOn{});
     EXPECT_FALSE(handled);
 }
 
 TEST_F(HSMTest, PowerOffIgnoredWhenAlreadyOff)
 {
-    bool handled = hsm.processCommand(StateCommands::PowerOff{});
+    bool handled = hsm.processMessage(Commands::PowerOff{});
     EXPECT_FALSE(handled);
 }
 
 // ============================================================================
-// Initialization Tests
+// Initialization Tests (Events)
 // ============================================================================
 
 TEST_F(HSMTest, InitCompleteTransitionsToIdle)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    bool handled = hsm.processCommand(StateCommands::InitComplete{});
+    hsm.processMessage(Commands::PowerOn{});
+    bool handled = hsm.processMessage(Events::InitComplete{});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Idle");
 }
 
 TEST_F(HSMTest, InitFailedTransitionsToError)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    bool handled = hsm.processCommand(StateCommands::InitFailed{"Sensor failure"});
+    hsm.processMessage(Commands::PowerOn{});
+    bool handled = hsm.processMessage(Events::InitFailed{"Sensor failure"});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Error");
 }
 
 TEST_F(HSMTest, InitCompleteIgnoredInOff)
 {
-    bool handled = hsm.processCommand(StateCommands::InitComplete{});
+    bool handled = hsm.processMessage(Events::InitComplete{});
     EXPECT_FALSE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Off");
 }
@@ -91,139 +91,139 @@ TEST_F(HSMTest, InitCompleteIgnoredInOff)
 
 TEST_F(HSMTest, StartSearchTransitionsToTracking)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    hsm.processCommand(StateCommands::InitComplete{});
-    bool handled = hsm.processCommand(StateCommands::StartSearch{});
+    hsm.processMessage(Commands::PowerOn{});
+    hsm.processMessage(Events::InitComplete{});
+    bool handled = hsm.processMessage(Commands::StartSearch{});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Tracking::Searching");
 }
 
 TEST_F(HSMTest, TargetFoundTransitionsToLocked)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    hsm.processCommand(StateCommands::InitComplete{});
-    hsm.processCommand(StateCommands::StartSearch{});
-    bool handled = hsm.processCommand(StateCommands::TargetFound{5000.0});
+    hsm.processMessage(Commands::PowerOn{});
+    hsm.processMessage(Events::InitComplete{});
+    hsm.processMessage(Commands::StartSearch{});
+    bool handled = hsm.processMessage(Events::TargetFound{5000.0});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Tracking::Locked");
 }
 
 TEST_F(HSMTest, StartMeasureTransitionsToMeasuring)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    hsm.processCommand(StateCommands::InitComplete{});
-    hsm.processCommand(StateCommands::StartSearch{});
-    hsm.processCommand(StateCommands::TargetFound{5000.0});
-    bool handled = hsm.processCommand(StateCommands::StartMeasure{});
+    hsm.processMessage(Commands::PowerOn{});
+    hsm.processMessage(Events::InitComplete{});
+    hsm.processMessage(Commands::StartSearch{});
+    hsm.processMessage(Events::TargetFound{5000.0});
+    bool handled = hsm.processMessage(Commands::StartMeasure{});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Tracking::Measuring");
 }
 
 TEST_F(HSMTest, MeasurementCompleteStaysInMeasuring)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    hsm.processCommand(StateCommands::InitComplete{});
-    hsm.processCommand(StateCommands::StartSearch{});
-    hsm.processCommand(StateCommands::TargetFound{5000.0});
-    hsm.processCommand(StateCommands::StartMeasure{});
-    bool handled = hsm.processCommand(StateCommands::MeasurementComplete{1.0, 2.0, 3.0});
+    hsm.processMessage(Commands::PowerOn{});
+    hsm.processMessage(Events::InitComplete{});
+    hsm.processMessage(Commands::StartSearch{});
+    hsm.processMessage(Events::TargetFound{5000.0});
+    hsm.processMessage(Commands::StartMeasure{});
+    bool handled = hsm.processMessage(Events::MeasurementComplete{1.0, 2.0, 3.0});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Tracking::Measuring");
 }
 
 TEST_F(HSMTest, StopMeasureTransitionsBackToLocked)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    hsm.processCommand(StateCommands::InitComplete{});
-    hsm.processCommand(StateCommands::StartSearch{});
-    hsm.processCommand(StateCommands::TargetFound{5000.0});
-    hsm.processCommand(StateCommands::StartMeasure{});
-    bool handled = hsm.processCommand(StateCommands::StopMeasure{});
+    hsm.processMessage(Commands::PowerOn{});
+    hsm.processMessage(Events::InitComplete{});
+    hsm.processMessage(Commands::StartSearch{});
+    hsm.processMessage(Events::TargetFound{5000.0});
+    hsm.processMessage(Commands::StartMeasure{});
+    bool handled = hsm.processMessage(Commands::StopMeasure{});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Tracking::Locked");
 }
 
 // ============================================================================
-// Target Loss Tests
+// Target Loss Tests (Events)
 // ============================================================================
 
 TEST_F(HSMTest, TargetLostFromLockedTransitionsToSearching)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    hsm.processCommand(StateCommands::InitComplete{});
-    hsm.processCommand(StateCommands::StartSearch{});
-    hsm.processCommand(StateCommands::TargetFound{5000.0});
-    bool handled = hsm.processCommand(StateCommands::TargetLost{});
+    hsm.processMessage(Commands::PowerOn{});
+    hsm.processMessage(Events::InitComplete{});
+    hsm.processMessage(Commands::StartSearch{});
+    hsm.processMessage(Events::TargetFound{5000.0});
+    bool handled = hsm.processMessage(Events::TargetLost{});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Tracking::Searching");
 }
 
 TEST_F(HSMTest, TargetLostFromMeasuringTransitionsToSearching)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    hsm.processCommand(StateCommands::InitComplete{});
-    hsm.processCommand(StateCommands::StartSearch{});
-    hsm.processCommand(StateCommands::TargetFound{5000.0});
-    hsm.processCommand(StateCommands::StartMeasure{});
-    bool handled = hsm.processCommand(StateCommands::TargetLost{});
+    hsm.processMessage(Commands::PowerOn{});
+    hsm.processMessage(Events::InitComplete{});
+    hsm.processMessage(Commands::StartSearch{});
+    hsm.processMessage(Events::TargetFound{5000.0});
+    hsm.processMessage(Commands::StartMeasure{});
+    bool handled = hsm.processMessage(Events::TargetLost{});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Tracking::Searching");
 }
 
 // ============================================================================
-// Return to Idle Tests
+// Return to Idle Tests (Commands)
 // ============================================================================
 
 TEST_F(HSMTest, ReturnToIdleFromTrackingTransitionsToIdle)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    hsm.processCommand(StateCommands::InitComplete{});
-    hsm.processCommand(StateCommands::StartSearch{});
-    bool handled = hsm.processCommand(StateCommands::ReturnToIdle{});
+    hsm.processMessage(Commands::PowerOn{});
+    hsm.processMessage(Events::InitComplete{});
+    hsm.processMessage(Commands::StartSearch{});
+    bool handled = hsm.processMessage(Commands::ReturnToIdle{});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Idle");
 }
 
 TEST_F(HSMTest, ReturnToIdleFromLockedTransitionsToIdle)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    hsm.processCommand(StateCommands::InitComplete{});
-    hsm.processCommand(StateCommands::StartSearch{});
-    hsm.processCommand(StateCommands::TargetFound{5000.0});
-    bool handled = hsm.processCommand(StateCommands::ReturnToIdle{});
+    hsm.processMessage(Commands::PowerOn{});
+    hsm.processMessage(Events::InitComplete{});
+    hsm.processMessage(Commands::StartSearch{});
+    hsm.processMessage(Events::TargetFound{5000.0});
+    bool handled = hsm.processMessage(Commands::ReturnToIdle{});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Idle");
 }
 
 // ============================================================================
-// Error Handling Tests
+// Error Handling Tests (Events and Commands)
 // ============================================================================
 
 TEST_F(HSMTest, ErrorOccurredFromIdleTransitionsToError)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    hsm.processCommand(StateCommands::InitComplete{});
-    bool handled = hsm.processCommand(StateCommands::ErrorOccurred{100, "Test error"});
+    hsm.processMessage(Commands::PowerOn{});
+    hsm.processMessage(Events::InitComplete{});
+    bool handled = hsm.processMessage(Events::ErrorOccurred{100, "Test error"});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Error");
 }
 
 TEST_F(HSMTest, ErrorOccurredFromTrackingTransitionsToError)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    hsm.processCommand(StateCommands::InitComplete{});
-    hsm.processCommand(StateCommands::StartSearch{});
-    bool handled = hsm.processCommand(StateCommands::ErrorOccurred{101, "Tracking error"});
+    hsm.processMessage(Commands::PowerOn{});
+    hsm.processMessage(Events::InitComplete{});
+    hsm.processMessage(Commands::StartSearch{});
+    bool handled = hsm.processMessage(Events::ErrorOccurred{101, "Tracking error"});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Error");
 }
 
 TEST_F(HSMTest, ResetFromErrorTransitionsToInitializing)
 {
-    hsm.processCommand(StateCommands::PowerOn{});
-    hsm.processCommand(StateCommands::InitComplete{});
-    hsm.processCommand(StateCommands::ErrorOccurred{100, "Test error"});
-    bool handled = hsm.processCommand(StateCommands::Reset{});
+    hsm.processMessage(Commands::PowerOn{});
+    hsm.processMessage(Events::InitComplete{});
+    hsm.processMessage(Events::ErrorOccurred{100, "Test error"});
+    bool handled = hsm.processMessage(Commands::Reset{});
     EXPECT_TRUE(handled);
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Initializing");
 }
@@ -237,40 +237,40 @@ TEST_F(HSMTest, CompleteWorkflow)
     // Start from Off
     EXPECT_EQ(hsm.getCurrentStateName(), "Off");
 
-    // Power on -> Initializing
-    EXPECT_TRUE(hsm.processCommand(StateCommands::PowerOn{}));
+    // Power on -> Initializing (Command)
+    EXPECT_TRUE(hsm.processMessage(Commands::PowerOn{}));
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Initializing");
 
-    // Init complete -> Idle
-    EXPECT_TRUE(hsm.processCommand(StateCommands::InitComplete{}));
+    // Init complete -> Idle (Event)
+    EXPECT_TRUE(hsm.processMessage(Events::InitComplete{}));
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Idle");
 
-    // Start search -> Searching
-    EXPECT_TRUE(hsm.processCommand(StateCommands::StartSearch{}));
+    // Start search -> Searching (Command)
+    EXPECT_TRUE(hsm.processMessage(Commands::StartSearch{}));
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Tracking::Searching");
 
-    // Target found -> Locked
-    EXPECT_TRUE(hsm.processCommand(StateCommands::TargetFound{5000.0}));
+    // Target found -> Locked (Event)
+    EXPECT_TRUE(hsm.processMessage(Events::TargetFound{5000.0}));
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Tracking::Locked");
 
-    // Start measure -> Measuring
-    EXPECT_TRUE(hsm.processCommand(StateCommands::StartMeasure{}));
+    // Start measure -> Measuring (Command)
+    EXPECT_TRUE(hsm.processMessage(Commands::StartMeasure{}));
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Tracking::Measuring");
 
-    // Record measurements
-    EXPECT_TRUE(hsm.processCommand(StateCommands::MeasurementComplete{1.0, 2.0, 3.0}));
-    EXPECT_TRUE(hsm.processCommand(StateCommands::MeasurementComplete{4.0, 5.0, 6.0}));
+    // Record measurements (Events)
+    EXPECT_TRUE(hsm.processMessage(Events::MeasurementComplete{1.0, 2.0, 3.0}));
+    EXPECT_TRUE(hsm.processMessage(Events::MeasurementComplete{4.0, 5.0, 6.0}));
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Tracking::Measuring");
 
-    // Stop measure -> Locked
-    EXPECT_TRUE(hsm.processCommand(StateCommands::StopMeasure{}));
+    // Stop measure -> Locked (Command)
+    EXPECT_TRUE(hsm.processMessage(Commands::StopMeasure{}));
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Tracking::Locked");
 
-    // Return to idle
-    EXPECT_TRUE(hsm.processCommand(StateCommands::ReturnToIdle{}));
+    // Return to idle (Command)
+    EXPECT_TRUE(hsm.processMessage(Commands::ReturnToIdle{}));
     EXPECT_EQ(hsm.getCurrentStateName(), "Operational::Idle");
 
-    // Power off -> Off
-    EXPECT_TRUE(hsm.processCommand(StateCommands::PowerOff{}));
+    // Power off -> Off (Command)
+    EXPECT_TRUE(hsm.processMessage(Commands::PowerOff{}));
     EXPECT_EQ(hsm.getCurrentStateName(), "Off");
 }

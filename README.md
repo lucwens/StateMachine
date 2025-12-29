@@ -7,16 +7,56 @@ A C++17 implementation demonstrating the **Hierarchical State Machine (HSM)** pa
 This project showcases modern C++ patterns for implementing complex state machines with:
 
 - **Hierarchical (nested) states** using `std::variant`
-- **Type-safe command handling** with `std::visit`
+- **Type-safe event/command handling** with `std::visit`
 - **State entry/exit actions** for resource management
 - **Composite states** containing sub-states
-- **Command-driven transitions** with proper action handling
+- **Event-driven and command-driven transitions** with proper action handling
 - **Dedicated worker thread** for the HSM engine
 - **Galvanic separation** between UI and worker threads
-- **StateCommands** (commands that trigger state transitions)
-- **ActionCommands** (commands that don't change state, may be state-restricted)
+- **Events** (past-tense notifications: "what happened")
+- **Commands** (imperative instructions: "what to do")
 - **JSON message protocol** for inter-thread communication
 - **Synchronous/asynchronous execution** with timeout support
+
+## Events vs Commands
+
+The HSM distinguishes between two types of messages based on semantic meaning:
+
+### Events (Past Tense - "What Happened")
+Events represent external occurrences. The FSM doesn't control these; it simply reacts to them.
+
+| Event | Parameters | Description |
+|-------|------------|-------------|
+| `InitComplete` | - | Initialization completed successfully |
+| `InitFailed` | errorReason | Initialization failed with error |
+| `TargetFound` | distance_mm | Target retroreflector was found |
+| `TargetLost` | - | Target was lost during tracking |
+| `MeasurementComplete` | x, y, z | A measurement point was recorded |
+| `ErrorOccurred` | errorCode, description | An error occurred in the system |
+
+### Commands (Imperative - "What to Do")
+Commands are instructions sent to the FSM to drive specific outcomes.
+
+**State-Changing Commands:**
+| Command | Description |
+|---------|-------------|
+| `PowerOn` | Turn on the laser tracker |
+| `PowerOff` | Turn off the laser tracker |
+| `StartSearch` | Start searching for target |
+| `StartMeasure` | Start precision measurement |
+| `StopMeasure` | Stop measurement and return to locked |
+| `Reset` | Reset the system from error state |
+| `ReturnToIdle` | Return from tracking to idle state |
+
+**Action Commands (don't change state, may be state-restricted):**
+| Command | Valid States | Sync | Description |
+|---------|--------------|------|-------------|
+| `Home` | Idle | Yes | Move to home position |
+| `GetPosition` | Idle, Locked, Measuring | No | Get current position |
+| `SetLaserPower` | Any Operational | No | Adjust laser power (0.0-1.0) |
+| `Compensate` | Idle, Locked | Yes | Apply environmental compensation |
+| `GetStatus` | Any | No | Get system status |
+| `MoveRelative` | Idle, Locked | Yes | Relative movement by azimuth/elevation |
 
 ## State Hierarchy
 
@@ -26,55 +66,58 @@ The Laser Tracker HSM implements a multi-level state hierarchy:
 stateDiagram-v2
     [*] --> Off
 
-    Off --> Operational : PowerOn
-    Operational --> Off : PowerOff
+    Off --> Operational : PowerOn (Command)
+    Operational --> Off : PowerOff (Command)
 
     state Operational {
         [*] --> Initializing
 
-        Initializing --> Idle : InitComplete
-        Initializing --> Error : InitFailed
+        Initializing --> Idle : InitComplete (Event)
+        Initializing --> Error : InitFailed (Event)
 
-        Idle --> Tracking : StartSearch
-        Idle --> Error : ErrorOccurred
+        Idle --> Tracking : StartSearch (Command)
+        Idle --> Error : ErrorOccurred (Event)
 
-        Error --> Initializing : Reset
+        Error --> Initializing : Reset (Command)
 
         state Tracking {
             [*] --> Searching
 
-            Searching --> Locked : TargetFound
+            Searching --> Locked : TargetFound (Event)
 
-            Locked --> Measuring : StartMeasure
-            Locked --> Searching : TargetLost
+            Locked --> Measuring : StartMeasure (Command)
+            Locked --> Searching : TargetLost (Event)
 
-            Measuring --> Locked : StopMeasure
-            Measuring --> Searching : TargetLost
+            Measuring --> Locked : StopMeasure (Command)
+            Measuring --> Searching : TargetLost (Event)
         }
 
-        Tracking --> Idle : ReturnToIdle
-        Tracking --> Error : ErrorOccurred
+        Tracking --> Idle : ReturnToIdle (Command)
+        Tracking --> Error : ErrorOccurred (Event)
     }
 ```
 
-## Command Flow
+## Message Flow
 
 ```mermaid
 flowchart LR
-    subgraph StateCommands
+    subgraph Commands [Commands - Imperative]
         PowerOn([PowerOn])
         PowerOff([PowerOff])
-        InitComplete([InitComplete])
-        InitFailed([InitFailed])
         StartSearch([StartSearch])
-        TargetFound([TargetFound])
-        TargetLost([TargetLost])
         StartMeasure([StartMeasure])
         StopMeasure([StopMeasure])
-        MeasurementComplete([MeasurementComplete])
-        ErrorOccurred([ErrorOccurred])
         Reset([Reset])
         ReturnToIdle([ReturnToIdle])
+    end
+
+    subgraph Events [Events - Past Tense]
+        InitComplete([InitComplete])
+        InitFailed([InitFailed])
+        TargetFound([TargetFound])
+        TargetLost([TargetLost])
+        MeasurementComplete([MeasurementComplete])
+        ErrorOccurred([ErrorOccurred])
     end
 
     PowerOn --> |Off → Operational| InitComplete
@@ -93,10 +136,11 @@ flowchart LR
 classDiagram
     class HSM {
         -State currentState_
-        +processEvent(Event) bool
+        +processMessage(StateMessage) bool
         +getCurrentStateName() string
         +isInState~S~() bool
         +printState() void
+        -handleMessage(State, StateMessage) bool
         -transitionTo~NewState~(newState) void
     }
 
@@ -147,21 +191,8 @@ The `ThreadedHSM` class provides complete galvanic separation between the UI/mai
 - **Message-Based Communication**: Events and commands sent via thread-safe queue
 - **Synchronous & Asynchronous**: Choose blocking or fire-and-forget message sending
 - **Timeout Support**: Configurable timeouts prevent indefinite blocking
-- **Command Buffering**: Messages queued during sync operations
+- **Message Buffering**: Messages queued during sync operations
 - **Debugger-Friendly**: Worker thread is named for easy identification in Visual Studio/debuggers
-
-### Commands
-
-Commands are actions that don't change state but are restricted to specific states:
-
-| Command | Valid States | Sync | Description |
-|---------|--------------|------|-------------|
-| `Home` | Idle | Yes | Move to home position |
-| `GetPosition` | Idle, Locked, Measuring | No | Get current position |
-| `SetLaserPower` | Any Operational | No | Adjust laser power (0.0-1.0) |
-| `Compensate` | Idle, Locked | Yes | Apply environmental compensation |
-| `GetStatus` | Any | No | Get system status |
-| `MoveRelative` | Idle, Locked | Yes | Relative movement by azimuth/elevation |
 
 ### JSON Message Protocol
 
@@ -197,14 +228,18 @@ using namespace LaserTracker;
 ThreadedHSM tracker;
 tracker.start();
 
-// Send async state command (fire and forget)
-tracker.sendStateCommandAsync(StateCommands::PowerOn{});
+// Send message async (fire and forget)
+tracker.sendMessageAsync(Commands::PowerOn{});
 
-// Send sync state command and wait for response
-auto response = tracker.sendStateCommandSync(StateCommands::InitComplete{});
+// Send message sync and wait for response
+auto response = tracker.sendMessage(Events::InitComplete{});
 
-// Send action command and get result
-auto result = tracker.sendActionCommand(Commands::Home{50.0});
+// Same API for Commands and Events - unified interface
+tracker.sendMessage(Commands::StartSearch{});
+tracker.sendMessage(Events::TargetFound{5000.0});
+
+// Action commands work the same way
+auto result = tracker.sendMessage(Commands::Home{50.0});
 if (result.success)
 {
     std::cout << "Home complete: " << result.params.dump() << "\n";
@@ -212,6 +247,8 @@ if (result.success)
 
 tracker.stop();
 ```
+
+The API is unified - `sendMessage()` and `sendMessageAsync()` work for both Events and Commands. The namespace distinction (`Events::` vs `Commands::`) provides semantic clarity while the processing is uniform.
 
 ## C++ Programming Patterns Used
 
@@ -231,24 +268,38 @@ using TrackingSubState = std::variant<Searching, Locked, Measuring>;
 - No virtual function overhead
 - Exhaustive pattern matching with `std::visit`
 
-### 2. Command Dispatch with `std::visit`
+### 2. Unified Message Dispatch with `std::visit`
 
 ```cpp
-bool processCommand(const StateCommand& command)
+// Single flat variant for all message types
+using StateMessage = std::variant<
+    Events::InitComplete, Events::TargetFound, ...
+    Commands::PowerOn, Commands::StartSearch, ...
+>;
+
+// Unified processing - no if/else needed
+bool processMessage(const StateMessage& msg)
 {
     return std::visit(
-        [this, &command](auto& state) -> bool
+        [this, &msg](auto& state) -> bool
         {
-            return this->handleCommand(state, command);
+            return this->handleMessage(state, msg);
         },
         currentState_);
+}
+
+// Uniform name extraction via operator()
+std::string getMessageName(const StateMessage& msg)
+{
+    return std::visit([](const auto& m) { return m(); }, msg);
 }
 ```
 
 **Benefits:**
-- Type-safe command routing
+- Type-safe message routing
 - Compiler enforces handling all state types
-- Clean separation of concerns
+- Uniform API for Events and Commands
+- No if/else dispatch logic needed
 
 ### 3. State Entry/Exit Actions
 
@@ -381,34 +432,34 @@ g++ -std=c++17 -pthread -o laser_tracker_hsm main.cpp
 
 ### Interactive Mode Commands
 
-**StateCommands (trigger state changes):**
+**Commands (Imperative - "What to Do"):**
 
 | Command | Description |
 |---------|-------------|
-| `power_on` | Power on the laser tracker |
-| `power_off` | Power off the laser tracker |
-| `init_ok` | Signal initialization complete |
-| `init_fail` | Signal initialization failed |
+| `power_on` | Turn on the laser tracker |
+| `power_off` | Turn off the laser tracker |
 | `search` | Start searching for target |
-| `found <dist>` | Target found at distance (mm) |
-| `lost` | Target lost |
 | `measure` | Start measuring |
-| `point <x> <y> <z>` | Record a measurement point |
 | `stop` | Stop measuring |
 | `idle` | Return to idle state |
-| `error <code>` | Simulate an error |
 | `reset` | Reset from error state |
-
-**ActionCommands (actions with results):**
-
-| Command | Description |
-|---------|-------------|
 | `home [speed]` | Move to home position (Idle only) |
 | `getpos` | Get current position |
 | `power <0-1>` | Set laser power level |
 | `compensate <temp> <pressure> <humidity>` | Apply environmental compensation |
 | `status` | Get system status |
 | `move <az> <el>` | Move relative by azimuth/elevation |
+
+**Events (Past Tense - "What Happened"):**
+
+| Command | Description |
+|---------|-------------|
+| `init_ok` | Initialization completed |
+| `init_fail` | Initialization failed |
+| `found <dist>` | Target was found at distance (mm) |
+| `lost` | Target was lost |
+| `point <x> <y> <z>` | Measurement point was recorded |
+| `error <code>` | An error occurred |
 
 **Utilities:**
 
@@ -420,43 +471,47 @@ g++ -std=c++17 -pthread -o laser_tracker_hsm main.cpp
 
 ### Demo Scenarios
 
-1. **Threaded HSM Basic Operation** - Async/sync command sending to worker thread
-2. **ActionCommands with State Restrictions** - Command validation and execution
+1. **Threaded HSM Basic Operation** - Async/sync command and event sending to worker thread
+2. **Commands with State Restrictions** - Command validation and execution
 3. **Synchronous Command Buffering** - Message queuing during sync operations
 4. **JSON Message Protocol** - Raw JSON message handling
-5. **Multi-threaded Command Sending** - Multiple threads sending commands to HSM
+5. **Multi-threaded Event Sending** - Multiple threads sending events to HSM
 6. **Complete Workflow** - Full laser tracker workflow through all states
 
 ## State Transition Table
 
-| Current State | StateCommand | Next State |
-|---------------|-------|------------|
-| Off | PowerOn | Operational::Initializing |
-| Operational::* | PowerOff | Off |
-| Initializing | InitComplete | Idle |
-| Initializing | InitFailed | Error |
-| Idle | StartSearch | Tracking::Searching |
-| Idle | ErrorOccurred | Error |
-| Tracking::* | ReturnToIdle | Idle |
-| Tracking::* | ErrorOccurred | Error |
-| Searching | TargetFound | Locked |
-| Locked | StartMeasure | Measuring |
-| Locked | TargetLost | Searching |
-| Measuring | MeasurementComplete | Measuring (internal) |
-| Measuring | StopMeasure | Locked |
-| Measuring | TargetLost | Searching |
-| Error | Reset | Initializing |
+| Current State | Message | Type | Next State |
+|---------------|---------|------|------------|
+| Off | PowerOn | Command | Operational::Initializing |
+| Operational::* | PowerOff | Command | Off |
+| Initializing | InitComplete | Event | Idle |
+| Initializing | InitFailed | Event | Error |
+| Idle | StartSearch | Command | Tracking::Searching |
+| Idle | ErrorOccurred | Event | Error |
+| Tracking::* | ReturnToIdle | Command | Idle |
+| Tracking::* | ErrorOccurred | Event | Error |
+| Searching | TargetFound | Event | Locked |
+| Locked | StartMeasure | Command | Measuring |
+| Locked | TargetLost | Event | Searching |
+| Measuring | MeasurementComplete | Event | Measuring (internal) |
+| Measuring | StopMeasure | Command | Locked |
+| Measuring | TargetLost | Event | Searching |
+| Error | Reset | Command | Initializing |
 
 ## Project Structure
 
 ```
 StateMachine/
 ├── CMakeLists.txt        # CMake build configuration
-├── ThreadedHSM.hpp       # Complete HSM with threading, commands & JSON messaging
+├── ThreadedHSM.hpp       # Complete HSM with threading, events/commands & JSON messaging
 ├── main.cpp              # Demo application
+├── tests/
+│   ├── test_hsm.cpp           # HSM state transition tests
+│   ├── test_threaded_hsm.cpp  # Threading and message passing tests
+│   └── test_action_commands.cpp # Action command tests
 ├── .clang-format         # Code formatting configuration
-├── claude.md             # Claude Code guidelines
-└── README.md             # This file
+├── CLAUDE.md             # Claude Code guidelines (includes README maintenance rules)
+└── README.md             # This file (keep in sync with code!)
 ```
 
 ## Key Design Decisions
@@ -466,8 +521,10 @@ StateMachine/
 3. **Value Semantics**: States are value types stored in variants, avoiding heap allocation
 4. **Minimal Dependencies**: Uses C++ standard library plus [nlohmann/json](https://github.com/nlohmann/json) for JSON handling
 5. **Compile-Time Safety**: Type errors are caught at compile time, not runtime
-6. **Unified Messaging**: Events and commands use the same message infrastructure
-7. **Industry-Standard JSON**: Uses nlohmann/json for robust JSON parsing and serialization
+6. **Semantic Messaging**: Events (past tense) and Commands (imperative) in separate namespaces for clear intent
+7. **Flat Variant Design**: Single `StateMessage` variant contains all types directly - no nested variants, no if/else dispatch
+8. **Uniform API**: `sendMessage()` works for both Events and Commands - namespace distinction provides semantics, processing is uniform
+9. **Industry-Standard JSON**: Uses nlohmann/json for robust JSON parsing and serialization
 
 ## References
 

@@ -67,27 +67,27 @@ TEST_F(ThreadedHSMTest, StopWithoutStartIsSafe)
 // Async Command Tests
 // ============================================================================
 
-TEST_F(ThreadedHSMTest, SendStateCommandAsyncReturnsMessageId)
+TEST_F(ThreadedHSMTest, SendCommandAsyncReturnsMessageId)
 {
     hsm->start();
-    uint64_t id = hsm->sendStateCommandAsync(StateCommands::PowerOn{});
+    uint64_t id = hsm->sendMessageAsync(Commands::PowerOn{});
     EXPECT_GT(id, 0u);
 }
 
 TEST_F(ThreadedHSMTest, AsyncCommandsProcessed)
 {
     hsm->start();
-    hsm->sendStateCommandAsync(StateCommands::PowerOn{});
+    hsm->sendMessageAsync(Commands::PowerOn{});
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Initializing");
 }
 
-TEST_F(ThreadedHSMTest, MultipleAsyncCommandsProcessedInOrder)
+TEST_F(ThreadedHSMTest, MultipleAsyncMessagesProcessedInOrder)
 {
     hsm->start();
-    hsm->sendStateCommandAsync(StateCommands::PowerOn{});
-    hsm->sendStateCommandAsync(StateCommands::InitComplete{});
-    hsm->sendStateCommandAsync(StateCommands::StartSearch{});
+    hsm->sendMessageAsync(Commands::PowerOn{});
+    hsm->sendMessageAsync(Events::InitComplete{});
+    hsm->sendMessageAsync(Commands::StartSearch{});
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Tracking::Searching");
 }
@@ -96,26 +96,26 @@ TEST_F(ThreadedHSMTest, MultipleAsyncCommandsProcessedInOrder)
 // Sync Command Tests
 // ============================================================================
 
-TEST_F(ThreadedHSMTest, SendStateCommandSyncReturnsResponse)
+TEST_F(ThreadedHSMTest, SendCommandSyncReturnsResponse)
 {
     hsm->start();
-    auto response = hsm->sendStateCommandSync(StateCommands::PowerOn{});
+    auto response = hsm->sendMessage(Commands::PowerOn{});
     EXPECT_TRUE(response.success);
 }
 
 TEST_F(ThreadedHSMTest, SyncCommandWaitsForCompletion)
 {
     hsm->start();
-    auto response = hsm->sendStateCommandSync(StateCommands::PowerOn{});
+    auto response = hsm->sendMessage(Commands::PowerOn{});
     EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Initializing");
 }
 
 TEST_F(ThreadedHSMTest, SyncCommandReturnsCorrectState)
 {
     hsm->start();
-    hsm->sendStateCommandSync(StateCommands::PowerOn{});
-    hsm->sendStateCommandSync(StateCommands::InitComplete{});
-    auto response = hsm->sendStateCommandSync(StateCommands::StartSearch{});
+    hsm->sendMessage(Commands::PowerOn{});
+    hsm->sendMessage(Events::InitComplete{});
+    auto response = hsm->sendMessage(Commands::StartSearch{});
     EXPECT_TRUE(response.success);
     EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Tracking::Searching");
 }
@@ -124,31 +124,31 @@ TEST_F(ThreadedHSMTest, SyncCommandReturnsCorrectState)
 // Thread Safety Tests
 // ============================================================================
 
-TEST_F(ThreadedHSMTest, ConcurrentAsyncCommandsAreSafe)
+TEST_F(ThreadedHSMTest, ConcurrentAsyncEventsAreSafe)
 {
     hsm->start();
-    hsm->sendStateCommandSync(StateCommands::PowerOn{});
-    hsm->sendStateCommandSync(StateCommands::InitComplete{});
-    hsm->sendStateCommandSync(StateCommands::StartSearch{});
-    hsm->sendStateCommandSync(StateCommands::TargetFound{5000.0});
-    hsm->sendStateCommandSync(StateCommands::StartMeasure{});
+    hsm->sendMessage(Commands::PowerOn{});
+    hsm->sendMessage(Events::InitComplete{});
+    hsm->sendMessage(Commands::StartSearch{});
+    hsm->sendMessage(Events::TargetFound{5000.0});
+    hsm->sendMessage(Commands::StartMeasure{});
 
-    std::atomic<int> commandsSent{0};
+    std::atomic<int> eventsSent{0};
     std::vector<std::thread> threads;
 
-    // Multiple threads sending measurement commands
+    // Multiple threads sending measurement events
     for (int t = 0; t < 4; ++t)
     {
         threads.emplace_back(
-            [this, &commandsSent, t]()
+            [this, &eventsSent, t]()
             {
                 for (int i = 0; i < 10; ++i)
                 {
-                    hsm->sendStateCommandAsync(StateCommands::MeasurementComplete{
+                    hsm->sendMessageAsync(Events::MeasurementComplete{
                         static_cast<double>(t * 100 + i),
                         static_cast<double>(t * 200 + i),
                         static_cast<double>(t * 50 + i)});
-                    commandsSent++;
+                    eventsSent++;
                 }
             });
     }
@@ -158,7 +158,7 @@ TEST_F(ThreadedHSMTest, ConcurrentAsyncCommandsAreSafe)
         t.join();
     }
 
-    EXPECT_EQ(commandsSent.load(), 40);
+    EXPECT_EQ(eventsSent.load(), 40);
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
     // Should still be in Measuring state
     EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Tracking::Measuring");
@@ -167,7 +167,7 @@ TEST_F(ThreadedHSMTest, ConcurrentAsyncCommandsAreSafe)
 TEST_F(ThreadedHSMTest, GetCurrentStateNameIsThreadSafe)
 {
     hsm->start();
-    hsm->sendStateCommandSync(StateCommands::PowerOn{});
+    hsm->sendMessage(Commands::PowerOn{});
 
     std::atomic<bool> running{true};
     std::vector<std::thread> readers;
@@ -187,9 +187,9 @@ TEST_F(ThreadedHSMTest, GetCurrentStateNameIsThreadSafe)
     }
 
     // Change state while readers are running
-    hsm->sendStateCommandSync(StateCommands::InitComplete{});
-    hsm->sendStateCommandSync(StateCommands::StartSearch{});
-    hsm->sendStateCommandSync(StateCommands::TargetFound{5000.0});
+    hsm->sendMessage(Events::InitComplete{});
+    hsm->sendMessage(Commands::StartSearch{});
+    hsm->sendMessage(Events::TargetFound{5000.0});
 
     running = false;
     for (auto& t : readers)
@@ -214,9 +214,9 @@ TEST_F(ThreadedHSMTest, SendJsonMessageParsesCorrectly)
 TEST_F(ThreadedHSMTest, SendJsonMessageWithParams)
 {
     hsm->start();
-    hsm->sendStateCommandSync(StateCommands::PowerOn{});
-    hsm->sendStateCommandSync(StateCommands::InitComplete{});
-    hsm->sendStateCommandSync(StateCommands::StartSearch{});
+    hsm->sendMessage(Commands::PowerOn{});
+    hsm->sendMessage(Events::InitComplete{});
+    hsm->sendMessage(Commands::StartSearch{});
 
     std::string json = R"({"id": 101, "name": "TargetFound", "params": {"distance_mm": 3000.0}, "sync": false})";
     hsm->sendJsonMessage(json);
@@ -298,10 +298,10 @@ TEST_F(ThreadedHSMTest, GetCurrentStateNameAfterStart)
 TEST_F(ThreadedHSMTest, StateUpdatesVisibleImmediatelyAfterSync)
 {
     hsm->start();
-    hsm->sendStateCommandSync(StateCommands::PowerOn{});
+    hsm->sendMessage(Commands::PowerOn{});
     EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Initializing");
 
-    hsm->sendStateCommandSync(StateCommands::InitComplete{});
+    hsm->sendMessage(Events::InitComplete{});
     EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Idle");
 }
 
@@ -312,7 +312,7 @@ TEST_F(ThreadedHSMTest, StateUpdatesVisibleImmediatelyAfterSync)
 TEST_F(ThreadedHSMTest, CommandBeforeStartIsHandled)
 {
     // Should not crash, but command may not be processed
-    hsm->sendStateCommandAsync(StateCommands::PowerOn{});
+    hsm->sendMessageAsync(Commands::PowerOn{});
     hsm->start();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     // State depends on implementation - may or may not have processed the command

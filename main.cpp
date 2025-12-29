@@ -5,14 +5,17 @@
  *
  * This program demonstrates:
  * 1. Hierarchical state nesting using std::variant
- * 2. Type-safe command handling with std::visit
+ * 2. Type-safe event/command handling with std::visit
  * 3. State entry/exit actions
  * 4. Composite states with sub-states
- * 5. Command-driven state transitions
- * 6. Threaded HSM with unified command interface
- * 7. Synchronous and asynchronous commands
+ * 5. Event-driven and command-driven state transitions
+ * 6. Threaded HSM with Events and Commands
+ * 7. Synchronous and asynchronous messaging
  * 8. JSON message protocol
  * 9. Galvanic separation between UI and worker thread
+ *
+ * Events: Past-tense notifications (InitComplete, TargetFound, etc.)
+ * Commands: Imperative instructions (PowerOn, StartSearch, Home, etc.)
  *
  * Compile with: g++ -std=c++17 -pthread -o laser_tracker_hsm main.cpp
  */
@@ -51,8 +54,8 @@ void printSeparator(const std::string& title = "")
  *
  * Demonstrates the threaded HSM with:
  * - HSM running in separate thread
- * - Async event sending
- * - Sync event sending
+ * - Async command and event sending
+ * - Sync command and event sending
  */
 void demoThreadedBasic()
 {
@@ -61,25 +64,25 @@ void demoThreadedBasic()
     ThreadedHSM tracker;
     tracker.start();
 
-    std::cout << "\n--- Sending events to HSM thread ---\n";
+    std::cout << "\n--- Sending commands/events to HSM thread ---\n";
 
-    // Send async events
-    std::cout << "\nSending PowerOn async...\n";
-    tracker.sendStateCommandAsync(StateCommands::PowerOn{});
+    // Send async command
+    std::cout << "\nSending PowerOn command async...\n";
+    tracker.sendMessageAsync(Commands::PowerOn{});
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     std::cout << "Current state: " << tracker.getCurrentStateName() << "\n";
 
     // Send sync event and wait for response
-    std::cout << "\nSending InitComplete sync...\n";
-    auto response = tracker.sendStateCommandSync(StateCommands::InitComplete{});
+    std::cout << "\nSending InitComplete event sync...\n";
+    auto response = tracker.sendMessage(Events::InitComplete{});
     std::cout << "Response: success=" << (response.success ? "true" : "false") << ", state=" << tracker.getCurrentStateName() << "\n";
 
-    // More async events
-    tracker.sendStateCommandAsync(StateCommands::StartSearch{});
+    // More async: command then event
+    tracker.sendMessageAsync(Commands::StartSearch{});
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    tracker.sendStateCommandAsync(StateCommands::TargetFound{5000.0});
+    tracker.sendMessageAsync(Events::TargetFound{5000.0});
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     std::cout << "Final state: " << tracker.getCurrentStateName() << "\n";
@@ -101,15 +104,15 @@ void demoCommands()
     tracker.start();
 
     // Setup: Power on and initialize
-    tracker.sendStateCommandSync(StateCommands::PowerOn{});
-    tracker.sendStateCommandSync(StateCommands::InitComplete{});
+    tracker.sendMessage(Commands::PowerOn{});
+    tracker.sendMessage(Events::InitComplete{});
 
     std::cout << "\n--- Testing Commands in Idle State ---\n";
     std::cout << "Current state: " << tracker.getCurrentStateName() << "\n";
 
     // Home command (sync, valid in Idle)
     std::cout << "\nSending Home command (sync)...\n";
-    auto homeResult = tracker.sendActionCommand(Commands::Home{50.0});
+    auto homeResult = tracker.sendMessage(Commands::Home{50.0});
     std::cout << "Home result: success=" << (homeResult.success ? "true" : "false") << "\n";
     if (homeResult.success)
     {
@@ -118,14 +121,14 @@ void demoCommands()
 
     // GetPosition command (async)
     std::cout << "\nSending GetPosition command...\n";
-    auto posResult = tracker.sendActionCommand(Commands::GetPosition{});
+    auto posResult = tracker.sendMessage(Commands::GetPosition{});
     std::cout << "Position result: " << posResult.params.dump() << "\n";
 
     // SetLaserPower command
     std::cout << "\nSending SetLaserPower command...\n";
     Commands::SetLaserPower powerCmd;
     powerCmd.powerLevel = 0.75;
-    auto powerResult    = tracker.sendActionCommand(powerCmd);
+    auto powerResult    = tracker.sendMessage(powerCmd);
     std::cout << "Power result: success=" << (powerResult.success ? "true" : "false") << "\n";
 
     // Compensate command (sync)
@@ -134,21 +137,21 @@ void demoCommands()
     compCmd.temperature = 22.5;
     compCmd.pressure    = 1015.0;
     compCmd.humidity    = 45.0;
-    auto compResult     = tracker.sendActionCommand(compCmd);
+    auto compResult     = tracker.sendMessage(compCmd);
     std::cout << "Compensate result: " << compResult.params.dump() << "\n";
 
     // GetStatus command
     std::cout << "\nSending GetStatus command...\n";
-    auto statusResult = tracker.sendActionCommand(Commands::GetStatus{});
+    auto statusResult = tracker.sendMessage(Commands::GetStatus{});
     std::cout << "Status result: " << statusResult.params.dump() << "\n";
 
     // Try Home in wrong state
     std::cout << "\n--- Testing Home in wrong state ---\n";
-    tracker.sendStateCommandSync(StateCommands::StartSearch{});
-    tracker.sendStateCommandSync(StateCommands::TargetFound{3000.0});
+    tracker.sendMessage(Commands::StartSearch{});
+    tracker.sendMessage(Events::TargetFound{3000.0});
     std::cout << "Current state: " << tracker.getCurrentStateName() << "\n";
 
-    auto invalidHome = tracker.sendActionCommand(Commands::Home{});
+    auto invalidHome = tracker.sendMessage(Commands::Home{});
     std::cout << "Home in Locked state: success=" << (invalidHome.success ? "true" : "false") << ", error=" << invalidHome.error << "\n";
 
     tracker.stop();
@@ -168,25 +171,25 @@ void demoCommandBuffering()
     tracker.start();
 
     // Setup
-    tracker.sendStateCommandSync(StateCommands::PowerOn{});
-    tracker.sendStateCommandSync(StateCommands::InitComplete{});
+    tracker.sendMessage(Commands::PowerOn{});
+    tracker.sendMessage(Events::InitComplete{});
     std::cout << "State: " << tracker.getCurrentStateName() << "\n";
 
     std::cout << "\n--- Sending multiple commands (sync Home will block others) ---\n";
 
     // Send a slow sync command (Home)
     std::cout << "Sending Home command (will take ~1 second)...\n";
-    tracker.sendActionCommandAsync(Commands::Home{100.0});
+    tracker.sendMessageAsync(Commands::Home{100.0});
 
     // Immediately send more commands - these should be buffered
     std::cout << "Sending GetPosition (should be buffered)...\n";
-    tracker.sendActionCommandAsync(Commands::GetPosition{});
+    tracker.sendMessageAsync(Commands::GetPosition{});
 
     std::cout << "Sending GetStatus (should be buffered)...\n";
-    tracker.sendActionCommandAsync(Commands::GetStatus{});
+    tracker.sendMessageAsync(Commands::GetStatus{});
 
     std::cout << "Sending SetLaserPower (should be buffered)...\n";
-    tracker.sendActionCommandAsync(Commands::SetLaserPower{0.5});
+    tracker.sendMessageAsync(Commands::SetLaserPower{0.5});
 
     std::cout << "\nWaiting for all commands to complete...\n";
     std::this_thread::sleep_for(std::chrono::milliseconds(2000));
@@ -257,11 +260,11 @@ void demoMultiThreaded()
     tracker.start();
 
     // Setup
-    tracker.sendStateCommandSync(StateCommands::PowerOn{});
-    tracker.sendStateCommandSync(StateCommands::InitComplete{});
-    tracker.sendStateCommandSync(StateCommands::StartSearch{});
-    tracker.sendStateCommandSync(StateCommands::TargetFound{2000.0});
-    tracker.sendStateCommandSync(StateCommands::StartMeasure{});
+    tracker.sendMessage(Commands::PowerOn{});
+    tracker.sendMessage(Events::InitComplete{});
+    tracker.sendMessage(Commands::StartSearch{});
+    tracker.sendMessage(Events::TargetFound{2000.0});
+    tracker.sendMessage(Commands::StartMeasure{});
 
     std::cout << "\n--- Multiple threads sending measurement events ---\n";
     std::cout << "Initial state: " << tracker.getCurrentStateName() << "\n";
@@ -280,7 +283,7 @@ void demoMultiThreaded()
                     double x = t * 100.0 + i;
                     double y = t * 200.0 + i;
                     double z = t * 50.0 + i;
-                    tracker.sendStateCommandAsync(StateCommands::MeasurementComplete{x, y, z});
+                    tracker.sendMessageAsync(Events::MeasurementComplete{x, y, z});
                     eventCount++;
                     std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 }
@@ -316,62 +319,62 @@ void demoCompleteWorkflow()
 
     // Power on and initialize
     std::cout << "\n[1] Powering on...\n";
-    auto resp = tracker.sendStateCommandSync(StateCommands::PowerOn{});
+    auto resp = tracker.sendMessage(Commands::PowerOn{});
     std::cout << "State: " << tracker.getCurrentStateName() << "\n";
 
     std::cout << "\n[2] Completing initialization...\n";
-    resp = tracker.sendStateCommandSync(StateCommands::InitComplete{});
+    resp = tracker.sendMessage(Events::InitComplete{});
     std::cout << "State: " << tracker.getCurrentStateName() << "\n";
 
     // Home the system
     std::cout << "\n[3] Homing system...\n";
-    auto homeResult = tracker.sendActionCommand(Commands::Home{75.0});
+    auto homeResult = tracker.sendMessage(Commands::Home{75.0});
     std::cout << "Home result: " << (homeResult.success ? "success" : "failed") << "\n";
 
     // Start tracking
     std::cout << "\n[4] Starting target search...\n";
-    resp = tracker.sendStateCommandSync(StateCommands::StartSearch{});
+    resp = tracker.sendMessage(Commands::StartSearch{});
     std::cout << "State: " << tracker.getCurrentStateName() << "\n";
 
     // Simulate finding target
     std::cout << "\n[5] Target found at 5000mm...\n";
-    resp = tracker.sendStateCommandSync(StateCommands::TargetFound{5000.0});
+    resp = tracker.sendMessage(Events::TargetFound{5000.0});
     std::cout << "State: " << tracker.getCurrentStateName() << "\n";
 
     // Get position
     std::cout << "\n[6] Getting position...\n";
-    auto posResult = tracker.sendActionCommand(Commands::GetPosition{});
+    auto posResult = tracker.sendMessage(Commands::GetPosition{});
     std::cout << "Position: " << posResult.params.dump() << "\n";
 
     // Start measuring
     std::cout << "\n[7] Starting measurement session...\n";
-    resp = tracker.sendStateCommandSync(StateCommands::StartMeasure{});
+    resp = tracker.sendMessage(Commands::StartMeasure{});
     std::cout << "State: " << tracker.getCurrentStateName() << "\n";
 
     // Record some measurements
     std::cout << "\n[8] Recording measurement points...\n";
-    tracker.sendStateCommandSync(StateCommands::MeasurementComplete{100.123, 200.456, 50.789});
-    tracker.sendStateCommandSync(StateCommands::MeasurementComplete{100.234, 200.567, 50.890});
-    tracker.sendStateCommandSync(StateCommands::MeasurementComplete{100.345, 200.678, 50.901});
+    tracker.sendMessage(Events::MeasurementComplete{100.123, 200.456, 50.789});
+    tracker.sendMessage(Events::MeasurementComplete{100.234, 200.567, 50.890});
+    tracker.sendMessage(Events::MeasurementComplete{100.345, 200.678, 50.901});
 
     // Stop measuring
     std::cout << "\n[9] Stopping measurement...\n";
-    resp = tracker.sendStateCommandSync(StateCommands::StopMeasure{});
+    resp = tracker.sendMessage(Commands::StopMeasure{});
     std::cout << "State: " << tracker.getCurrentStateName() << "\n";
 
     // Return to idle
     std::cout << "\n[10] Returning to idle...\n";
-    resp = tracker.sendStateCommandSync(StateCommands::ReturnToIdle{});
+    resp = tracker.sendMessage(Commands::ReturnToIdle{});
     std::cout << "State: " << tracker.getCurrentStateName() << "\n";
 
     // Get final status
     std::cout << "\n[11] Final status check...\n";
-    auto statusResult = tracker.sendActionCommand(Commands::GetStatus{});
+    auto statusResult = tracker.sendMessage(Commands::GetStatus{});
     std::cout << "Status: " << statusResult.params.dump() << "\n";
 
     // Power off
     std::cout << "\n[12] Powering off...\n";
-    resp = tracker.sendStateCommandSync(StateCommands::PowerOff{});
+    resp = tracker.sendMessage(Commands::PowerOff{});
     std::cout << "State: " << tracker.getCurrentStateName() << "\n";
 
     tracker.stop();
@@ -385,29 +388,29 @@ void demoCompleteWorkflow()
 void printHelp()
 {
     std::cout << R"(
-Available Commands:
-  --- Events (trigger state changes) ---
-  power_on      - Power on the laser tracker
-  power_off     - Power off the laser tracker
-  init_ok       - Signal initialization complete
-  init_fail     - Signal initialization failed
+Available Messages:
+  --- Commands (Imperative - "What to Do") ---
+  power_on      - Turn on the laser tracker
+  power_off     - Turn off the laser tracker
   search        - Start searching for target
-  found <dist>  - Target found at distance (mm)
-  lost          - Target lost
   measure       - Start measuring
-  point <x> <y> <z> - Record a measurement point
   stop          - Stop measuring
   idle          - Return to idle state
-  error <code>  - Simulate an error
   reset         - Reset from error state
-
-  --- Commands (no state change, may return results) ---
   home [speed]  - Move to home position (sync, Idle only)
   getpos        - Get current position (async)
   power <0-1>   - Set laser power level
   compensate <temp> <pressure> <humidity> - Apply compensation (sync)
   status        - Get system status
   move <az> <el> - Move relative (sync, Idle/Locked only)
+
+  --- Events (Past Tense - "What Happened") ---
+  init_ok       - Initialization completed
+  init_fail     - Initialization failed
+  found <dist>  - Target was found at distance (mm)
+  lost          - Target was lost
+  point <x> <y> <z> - Measurement point was recorded
+  error <code>  - An error occurred
 
   --- Utilities ---
   state         - Print current state
@@ -417,13 +420,13 @@ Available Commands:
 }
 
 /**
- * @brief Interactive Mode - uses ThreadedHSM with full command support
+ * @brief Interactive Mode - uses ThreadedHSM with Events and Commands
  */
 void runInteractiveMode()
 {
-    printSeparator("INTERACTIVE MODE (Threaded HSM with Commands)");
+    printSeparator("INTERACTIVE MODE (Threaded HSM with Events/Commands)");
     std::cout << "Control the Threaded Laser Tracker HSM interactively.\n";
-    std::cout << "Commands run in a separate worker thread with sync/async support.\n";
+    std::cout << "Messages run in a separate worker thread with sync/async support.\n";
     printHelp();
 
     ThreadedHSM tracker;
@@ -456,79 +459,42 @@ void runInteractiveMode()
             continue;
         }
 
-        // Events
+        // Commands (imperative)
         if (cmd == "power_on")
         {
-            auto resp = tracker.sendStateCommandSync(StateCommands::PowerOn{});
+            auto resp = tracker.sendMessage(Commands::PowerOn{});
             std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
         }
         else if (cmd == "power_off")
         {
-            auto resp = tracker.sendStateCommandSync(StateCommands::PowerOff{});
-            std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
-        }
-        else if (cmd == "init_ok")
-        {
-            auto resp = tracker.sendStateCommandSync(StateCommands::InitComplete{});
-            std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
-        }
-        else if (cmd == "init_fail")
-        {
-            auto resp = tracker.sendStateCommandSync(StateCommands::InitFailed{"User simulated failure"});
+            auto resp = tracker.sendMessage(Commands::PowerOff{});
             std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
         }
         else if (cmd == "search")
         {
-            auto resp = tracker.sendStateCommandSync(StateCommands::StartSearch{});
-            std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
-        }
-        else if (cmd == "found")
-        {
-            double dist = 1000.0;
-            iss >> dist;
-            auto resp = tracker.sendStateCommandSync(StateCommands::TargetFound{dist});
-            std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
-        }
-        else if (cmd == "lost")
-        {
-            auto resp = tracker.sendStateCommandSync(StateCommands::TargetLost{});
+            auto resp = tracker.sendMessage(Commands::StartSearch{});
             std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
         }
         else if (cmd == "measure")
         {
-            auto resp = tracker.sendStateCommandSync(StateCommands::StartMeasure{});
-            std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
-        }
-        else if (cmd == "point")
-        {
-            double x = 0, y = 0, z = 0;
-            iss >> x >> y >> z;
-            auto resp = tracker.sendStateCommandSync(StateCommands::MeasurementComplete{x, y, z});
+            auto resp = tracker.sendMessage(Commands::StartMeasure{});
             std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
         }
         else if (cmd == "stop")
         {
-            auto resp = tracker.sendStateCommandSync(StateCommands::StopMeasure{});
+            auto resp = tracker.sendMessage(Commands::StopMeasure{});
             std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
         }
         else if (cmd == "idle")
         {
-            auto resp = tracker.sendStateCommandSync(StateCommands::ReturnToIdle{});
-            std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
-        }
-        else if (cmd == "error")
-        {
-            int code = 99;
-            iss >> code;
-            auto resp = tracker.sendStateCommandSync(StateCommands::ErrorOccurred{code, "User simulated error"});
+            auto resp = tracker.sendMessage(Commands::ReturnToIdle{});
             std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
         }
         else if (cmd == "reset")
         {
-            auto resp = tracker.sendStateCommandSync(StateCommands::Reset{});
+            auto resp = tracker.sendMessage(Commands::Reset{});
             std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
         }
-        // Commands
         else if (cmd == "home")
         {
             double speed = 100.0;
@@ -536,7 +502,7 @@ void runInteractiveMode()
             Commands::Home homeCmd;
             homeCmd.speed = speed;
             std::cout << "Executing Home command (sync, may take a moment)...\n";
-            auto resp = tracker.sendActionCommand(homeCmd);
+            auto resp = tracker.sendMessage(homeCmd);
             if (resp.success)
             {
                 std::cout << "Home complete. Result: " << resp.params.dump() << "\n";
@@ -548,7 +514,7 @@ void runInteractiveMode()
         }
         else if (cmd == "getpos")
         {
-            auto resp = tracker.sendActionCommand(Commands::GetPosition{});
+            auto resp = tracker.sendMessage(Commands::GetPosition{});
             if (resp.success)
             {
                 std::cout << "Position: " << resp.params.dump() << "\n";
@@ -564,7 +530,7 @@ void runInteractiveMode()
             iss >> level;
             Commands::SetLaserPower powerCmd;
             powerCmd.powerLevel = level;
-            auto resp           = tracker.sendActionCommand(powerCmd);
+            auto resp           = tracker.sendMessage(powerCmd);
             if (resp.success)
             {
                 std::cout << "Power set to " << (level * 100) << "%\n";
@@ -583,7 +549,7 @@ void runInteractiveMode()
             compCmd.pressure    = pressure;
             compCmd.humidity    = humidity;
             std::cout << "Executing Compensate command (sync)...\n";
-            auto resp = tracker.sendActionCommand(compCmd);
+            auto resp = tracker.sendMessage(compCmd);
             if (resp.success)
             {
                 std::cout << "Compensation applied. Result: " << resp.params.dump() << "\n";
@@ -595,7 +561,7 @@ void runInteractiveMode()
         }
         else if (cmd == "status")
         {
-            auto resp = tracker.sendActionCommand(Commands::GetStatus{});
+            auto resp = tracker.sendMessage(Commands::GetStatus{});
             if (resp.success)
             {
                 std::cout << "Status: " << resp.params.dump() << "\n";
@@ -613,7 +579,7 @@ void runInteractiveMode()
             moveCmd.azimuth   = az;
             moveCmd.elevation = el;
             std::cout << "Executing MoveRelative command (sync)...\n";
-            auto resp = tracker.sendActionCommand(moveCmd);
+            auto resp = tracker.sendMessage(moveCmd);
             if (resp.success)
             {
                 std::cout << "Move complete. Result: " << resp.params.dump() << "\n";
@@ -623,9 +589,46 @@ void runInteractiveMode()
                 std::cout << "MoveRelative failed: " << resp.error << "\n";
             }
         }
+        // Events (past tense)
+        else if (cmd == "init_ok")
+        {
+            auto resp = tracker.sendMessage(Events::InitComplete{});
+            std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
+        }
+        else if (cmd == "init_fail")
+        {
+            auto resp = tracker.sendMessage(Events::InitFailed{"User simulated failure"});
+            std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
+        }
+        else if (cmd == "found")
+        {
+            double dist = 1000.0;
+            iss >> dist;
+            auto resp = tracker.sendMessage(Events::TargetFound{dist});
+            std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
+        }
+        else if (cmd == "lost")
+        {
+            auto resp = tracker.sendMessage(Events::TargetLost{});
+            std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
+        }
+        else if (cmd == "point")
+        {
+            double x = 0, y = 0, z = 0;
+            iss >> x >> y >> z;
+            auto resp = tracker.sendMessage(Events::MeasurementComplete{x, y, z});
+            std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
+        }
+        else if (cmd == "error")
+        {
+            int code = 99;
+            iss >> code;
+            auto resp = tracker.sendMessage(Events::ErrorOccurred{code, "User simulated error"});
+            std::cout << "Result: " << (resp.success ? "handled" : "ignored") << "\n";
+        }
         else
         {
-            std::cout << "Unknown command: " << cmd << ". Type 'help' for available commands.\n";
+            std::cout << "Unknown command: " << cmd << ". Type 'help' for available messages.\n";
         }
     }
 

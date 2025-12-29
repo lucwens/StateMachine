@@ -1,6 +1,6 @@
 /**
  * @file test_action_commands.cpp
- * @brief Unit tests for ActionCommands (non-state-changing commands)
+ * @brief Unit tests for Action Commands (non-state-changing commands)
  */
 
 #include <gtest/gtest.h>
@@ -25,21 +25,21 @@ class ActionCommandTest : public ::testing::Test
 
     void goToIdle()
     {
-        hsm.sendStateCommandSync(StateCommands::PowerOn{});
-        hsm.sendStateCommandSync(StateCommands::InitComplete{});
+        hsm.sendMessage(Commands::PowerOn{});
+        hsm.sendMessage(Events::InitComplete{});
     }
 
     void goToLocked()
     {
         goToIdle();
-        hsm.sendStateCommandSync(StateCommands::StartSearch{});
-        hsm.sendStateCommandSync(StateCommands::TargetFound{5000.0});
+        hsm.sendMessage(Commands::StartSearch{});
+        hsm.sendMessage(Events::TargetFound{5000.0});
     }
 
     void goToMeasuring()
     {
         goToLocked();
-        hsm.sendStateCommandSync(StateCommands::StartMeasure{});
+        hsm.sendMessage(Commands::StartMeasure{});
     }
 };
 
@@ -50,14 +50,14 @@ class ActionCommandTest : public ::testing::Test
 TEST_F(ActionCommandTest, HomeSucceedsInIdle)
 {
     goToIdle();
-    auto result = hsm.sendActionCommand(Commands::Home{50.0});
+    auto result = hsm.sendMessage(Commands::Home{50.0});
     EXPECT_TRUE(result.success);
     EXPECT_TRUE(result.params.contains("position"));
 }
 
 TEST_F(ActionCommandTest, HomeFailsInOff)
 {
-    auto result = hsm.sendActionCommand(Commands::Home{50.0});
+    auto result = hsm.sendMessage(Commands::Home{50.0});
     EXPECT_FALSE(result.success);
     EXPECT_FALSE(result.error.empty());
 }
@@ -65,14 +65,14 @@ TEST_F(ActionCommandTest, HomeFailsInOff)
 TEST_F(ActionCommandTest, HomeFailsInLocked)
 {
     goToLocked();
-    auto result = hsm.sendActionCommand(Commands::Home{50.0});
+    auto result = hsm.sendMessage(Commands::Home{50.0});
     EXPECT_FALSE(result.success);
 }
 
 TEST_F(ActionCommandTest, HomeFailsInMeasuring)
 {
     goToMeasuring();
-    auto result = hsm.sendActionCommand(Commands::Home{50.0});
+    auto result = hsm.sendMessage(Commands::Home{50.0});
     EXPECT_FALSE(result.success);
 }
 
@@ -83,7 +83,7 @@ TEST_F(ActionCommandTest, HomeFailsInMeasuring)
 TEST_F(ActionCommandTest, GetPositionSucceedsInIdle)
 {
     goToIdle();
-    auto result = hsm.sendActionCommand(Commands::GetPosition{});
+    auto result = hsm.sendMessage(Commands::GetPosition{});
     EXPECT_TRUE(result.success);
     EXPECT_TRUE(result.params.contains("position"));
     EXPECT_TRUE(result.params["position"].contains("x"));
@@ -94,20 +94,20 @@ TEST_F(ActionCommandTest, GetPositionSucceedsInIdle)
 TEST_F(ActionCommandTest, GetPositionSucceedsInLocked)
 {
     goToLocked();
-    auto result = hsm.sendActionCommand(Commands::GetPosition{});
+    auto result = hsm.sendMessage(Commands::GetPosition{});
     EXPECT_TRUE(result.success);
 }
 
 TEST_F(ActionCommandTest, GetPositionSucceedsInMeasuring)
 {
     goToMeasuring();
-    auto result = hsm.sendActionCommand(Commands::GetPosition{});
+    auto result = hsm.sendMessage(Commands::GetPosition{});
     EXPECT_TRUE(result.success);
 }
 
 TEST_F(ActionCommandTest, GetPositionFailsInOff)
 {
-    auto result = hsm.sendActionCommand(Commands::GetPosition{});
+    auto result = hsm.sendMessage(Commands::GetPosition{});
     EXPECT_FALSE(result.success);
 }
 
@@ -120,7 +120,7 @@ TEST_F(ActionCommandTest, SetLaserPowerSucceedsInIdle)
     goToIdle();
     Commands::SetLaserPower cmd;
     cmd.powerLevel = 0.75;
-    auto result = hsm.sendActionCommand(cmd);
+    auto result = hsm.sendMessage(cmd);
     EXPECT_TRUE(result.success);
 }
 
@@ -129,7 +129,7 @@ TEST_F(ActionCommandTest, SetLaserPowerSucceedsInLocked)
     goToLocked();
     Commands::SetLaserPower cmd;
     cmd.powerLevel = 0.5;
-    auto result = hsm.sendActionCommand(cmd);
+    auto result = hsm.sendMessage(cmd);
     EXPECT_TRUE(result.success);
 }
 
@@ -137,7 +137,7 @@ TEST_F(ActionCommandTest, SetLaserPowerFailsInOff)
 {
     Commands::SetLaserPower cmd;
     cmd.powerLevel = 0.5;
-    auto result = hsm.sendActionCommand(cmd);
+    auto result = hsm.sendMessage(cmd);
     EXPECT_FALSE(result.success);
 }
 
@@ -152,7 +152,7 @@ TEST_F(ActionCommandTest, CompensateSucceedsInIdle)
     cmd.temperature = 22.5;
     cmd.pressure = 1015.0;
     cmd.humidity = 45.0;
-    auto result = hsm.sendActionCommand(cmd);
+    auto result = hsm.sendMessage(cmd);
     EXPECT_TRUE(result.success);
     EXPECT_TRUE(result.params.contains("compensationFactor"));
     EXPECT_TRUE(result.params.contains("applied"));
@@ -165,14 +165,14 @@ TEST_F(ActionCommandTest, CompensateSucceedsInLocked)
     cmd.temperature = 20.0;
     cmd.pressure = 1013.25;
     cmd.humidity = 50.0;
-    auto result = hsm.sendActionCommand(cmd);
+    auto result = hsm.sendMessage(cmd);
     EXPECT_TRUE(result.success);
 }
 
 TEST_F(ActionCommandTest, CompensateFailsInOff)
 {
     Commands::Compensate cmd;
-    auto result = hsm.sendActionCommand(cmd);
+    auto result = hsm.sendMessage(cmd);
     EXPECT_FALSE(result.success);
 }
 
@@ -182,7 +182,7 @@ TEST_F(ActionCommandTest, CompensateFailsInOff)
 
 TEST_F(ActionCommandTest, GetStatusSucceedsInOff)
 {
-    auto result = hsm.sendActionCommand(Commands::GetStatus{});
+    auto result = hsm.sendMessage(Commands::GetStatus{});
     EXPECT_TRUE(result.success);
     EXPECT_TRUE(result.params.contains("state"));
     EXPECT_EQ(result.params["state"], "Off");
@@ -191,7 +191,7 @@ TEST_F(ActionCommandTest, GetStatusSucceedsInOff)
 TEST_F(ActionCommandTest, GetStatusSucceedsInIdle)
 {
     goToIdle();
-    auto result = hsm.sendActionCommand(Commands::GetStatus{});
+    auto result = hsm.sendMessage(Commands::GetStatus{});
     EXPECT_TRUE(result.success);
     EXPECT_EQ(result.params["state"], "Operational::Idle");
     EXPECT_TRUE(result.params["powered"].get<bool>());
@@ -201,7 +201,7 @@ TEST_F(ActionCommandTest, GetStatusSucceedsInIdle)
 TEST_F(ActionCommandTest, GetStatusSucceedsInTracking)
 {
     goToLocked();
-    auto result = hsm.sendActionCommand(Commands::GetStatus{});
+    auto result = hsm.sendMessage(Commands::GetStatus{});
     EXPECT_TRUE(result.success);
     EXPECT_EQ(result.params["state"], "Operational::Tracking::Locked");
 }
@@ -216,7 +216,7 @@ TEST_F(ActionCommandTest, MoveRelativeSucceedsInIdle)
     Commands::MoveRelative cmd;
     cmd.azimuth = 10.0;
     cmd.elevation = 5.0;
-    auto result = hsm.sendActionCommand(cmd);
+    auto result = hsm.sendMessage(cmd);
     EXPECT_TRUE(result.success);
     EXPECT_TRUE(result.params.contains("movedAz"));
     EXPECT_TRUE(result.params.contains("movedEl"));
@@ -228,7 +228,7 @@ TEST_F(ActionCommandTest, MoveRelativeSucceedsInLocked)
     Commands::MoveRelative cmd;
     cmd.azimuth = -5.0;
     cmd.elevation = 2.5;
-    auto result = hsm.sendActionCommand(cmd);
+    auto result = hsm.sendMessage(cmd);
     EXPECT_TRUE(result.success);
 }
 
@@ -238,14 +238,14 @@ TEST_F(ActionCommandTest, MoveRelativeFailsInMeasuring)
     Commands::MoveRelative cmd;
     cmd.azimuth = 1.0;
     cmd.elevation = 1.0;
-    auto result = hsm.sendActionCommand(cmd);
+    auto result = hsm.sendMessage(cmd);
     EXPECT_FALSE(result.success);
 }
 
 TEST_F(ActionCommandTest, MoveRelativeFailsInOff)
 {
     Commands::MoveRelative cmd;
-    auto result = hsm.sendActionCommand(cmd);
+    auto result = hsm.sendMessage(cmd);
     EXPECT_FALSE(result.success);
 }
 
