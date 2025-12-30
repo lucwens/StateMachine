@@ -51,6 +51,29 @@ struct Example {
 2. When adding code examples to documentation (README.md, etc.), use the same formatting style
 3. Run clang-format before committing if unsure about formatting
 
+## Markdown Formatting Rules
+
+When writing or editing markdown files (README.md, etc.):
+
+1. **Tables require a blank line before them** - Tables will not render correctly without a blank line separating them from the preceding content (especially after bold text or headers)
+
+   ```markdown
+   <!-- CORRECT -->
+   **My Header:**
+
+   | Column 1 | Column 2 |
+   |----------|----------|
+   | data     | data     |
+
+   <!-- INCORRECT - table won't render properly -->
+   **My Header:**
+   | Column 1 | Column 2 |
+   |----------|----------|
+   | data     | data     |
+   ```
+
+2. **Use consistent table alignment** - Align the pipe characters for readability in source
+
 ## README.md Maintenance
 
 **IMPORTANT**: The README.md file MUST be kept in sync with the codebase. Update README.md when making ANY of the following changes:
