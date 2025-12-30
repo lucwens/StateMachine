@@ -525,6 +525,14 @@ Message response = tracker.send("Home", {{"speed", 50.0}}, /*sync=*/ true);
 | Non-Blocking + Queue | `sendAsync()` | `true` | Returns | Buffers sync | Long ops, caller doesn't need result |
 | Both Blocking | `send()` | `true` | Blocks | Buffers sync | Critical ops needing result |
 
+**Example Functions by Combination:**
+
+| Dimension | Option A | Example | Option B | Example |
+|-----------|----------|---------|----------|---------|
+| **Caller Blocking** | `sendAsync()` | `sendMessageAsync(Events::TargetFound{})` | `sendMessage()` | `sendMessage(Commands::Home{})` |
+| **Queue Blocking** | `sync=false` | `sendMessage(Commands::GetPosition{})` | `sync=true` | `sendMessage(Commands::Home{})` |
+| **Unblock Condition** | Wait for result | `sendMessage(Commands::GetPosition{})` | Wait for state | `sendMessage(Commands::StartSearch{})` |
+
 #### How Futures and Promises Work
 
 The synchronous message pattern uses C++ `std::promise` and `std::future` to safely pass results between threads. This is a **one-time, one-way communication channel**:
