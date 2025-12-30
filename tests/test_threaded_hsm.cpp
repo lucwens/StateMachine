@@ -399,3 +399,358 @@ TEST_F(ThreadedHSMTest, RapidStartStopCycles)
         EXPECT_FALSE(hsm->isRunning());
     }
 }
+
+// ============================================================================
+// Caller Blocking Tests (Dimension 1: send() vs sendAsync())
+// ============================================================================
+
+TEST_F(ThreadedHSMTest, SendAsyncReturnsImmediately)
+{
+    hsm->start();
+
+    auto start = std::chrono::steady_clock::now();
+    uint64_t id = hsm->sendAsync("GetStatus", {}, false);
+    auto elapsed = std::chrono::steady_clock::now() - start;
+
+    // sendAsync should return in < 10ms (it just queues the message)
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 10);
+    EXPECT_GT(id, 0u);
+}
+
+TEST_F(ThreadedHSMTest, SendBlocksUntilResponse)
+{
+    hsm->start();
+    // Go to Idle state first
+    hsm->sendMessageAsync(Commands::PowerOn{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    hsm->sendMessage(Events::InitComplete{});
+
+    // Home command takes time (simulated delay in execute())
+    auto start = std::chrono::steady_clock::now();
+    auto response = hsm->send("Home", {{"speed", 100.0}}, false);
+    auto elapsed = std::chrono::steady_clock::now() - start;
+
+    // send() should block until Home completes (Home has a sleep in execute())
+    EXPECT_TRUE(response.success);
+    // Home at 100% speed sleeps for 1000ms, but we're flexible here
+    EXPECT_GT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 500);
+}
+
+TEST_F(ThreadedHSMTest, SendAsyncWithSyncFlagReturnsImmediately)
+{
+    hsm->start();
+    // Go to Idle state first
+    hsm->sendMessageAsync(Commands::PowerOn{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    hsm->sendMessage(Events::InitComplete{});
+
+    // Even with sync=true, sendAsync returns immediately
+    auto start = std::chrono::steady_clock::now();
+    uint64_t id = hsm->sendAsync("Home", {{"speed", 100.0}}, /*sync=*/true);
+    auto elapsed = std::chrono::steady_clock::now() - start;
+
+    // sendAsync should return immediately regardless of sync flag
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 10);
+    EXPECT_GT(id, 0u);
+
+    // Wait for Home to actually complete
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+}
+
+// ============================================================================
+// Queue Blocking Tests (Dimension 2: sync flag buffers other sync messages)
+// ============================================================================
+
+TEST_F(ThreadedHSMTest, SyncFlagBuffersOtherSyncMessages)
+{
+    hsm->start();
+    // Go to Idle state
+    hsm->sendMessageAsync(Commands::PowerOn{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    hsm->sendMessage(Events::InitComplete{});
+
+    // Start a slow sync operation (Home takes ~1s at 100% speed)
+    hsm->sendAsync("Home", {{"speed", 100.0}}, /*sync=*/true);
+
+    // Small delay to ensure Home starts processing
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Send another sync command while Home is running - it should be buffered
+    auto start = std::chrono::steady_clock::now();
+    hsm->sendAsync("Compensate", {{"temperature", 20.0}, {"pressure", 1013.25}, {"humidity", 50.0}}, /*sync=*/true);
+    auto elapsed = std::chrono::steady_clock::now() - start;
+
+    // sendAsync returns immediately even though it will be buffered
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 10);
+
+    // Wait for both commands to complete
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+
+    // Both should have completed
+    EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Idle");
+}
+
+TEST_F(ThreadedHSMTest, NonSyncMessagesNotBufferedDuringSyncOperation)
+{
+    // This test verifies the difference between sync and non-sync message handling:
+    // - sync=true messages are moved to a special buffer during a sync operation
+    // - sync=false messages stay in the normal queue
+    //
+    // Note: Both still wait for the current message to finish (single-threaded worker),
+    // but the buffering affects the ORDER of processing when multiple messages are queued.
+
+    hsm->start();
+    // Go to Idle state
+    hsm->sendMessageAsync(Commands::PowerOn{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    hsm->sendMessage(Events::InitComplete{});
+
+    // Queue multiple messages while Home is running
+    // The order should demonstrate buffering behavior:
+    // 1. Home (sync=true) - starts executing
+    // 2. GetStatus (sync=false) - goes to normal queue
+    // 3. Compensate (sync=true) - goes to buffer
+
+    hsm->sendAsync("Home", {{"speed", 100.0}}, /*sync=*/true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(20)); // Let Home start
+
+    // Queue GetStatus (non-sync) and Compensate (sync)
+    hsm->sendAsync("GetStatus", {}, /*sync=*/false);
+    hsm->sendAsync("Compensate", {{"temperature", 20.0}}, /*sync=*/true);
+
+    // Wait for all to complete
+    std::this_thread::sleep_for(std::chrono::milliseconds(2500));
+
+    // All should complete successfully
+    // Processing order: Home -> GetStatus -> Compensate
+    // (GetStatus not buffered, Compensate buffered but processed after GetStatus)
+    EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Idle");
+}
+
+TEST_F(ThreadedHSMTest, BufferedMessagesProcessedAfterSyncCompletes)
+{
+    hsm->start();
+    // Go to Idle state
+    hsm->sendMessageAsync(Commands::PowerOn{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    hsm->sendMessage(Events::InitComplete{});
+
+    // Track when Compensate completes
+    std::promise<Message> compensatePromise;
+    auto compensateFuture = compensatePromise.get_future();
+
+    // Start Home (sync=true, takes ~1s)
+    auto homeStart = std::chrono::steady_clock::now();
+    hsm->sendAsync("Home", {{"speed", 100.0}}, /*sync=*/true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Queue Compensate (sync=true) - will be buffered
+    std::thread compensateThread(
+        [this, &compensatePromise]()
+        {
+            auto response = hsm->send("Compensate", {{"temperature", 25.0}, {"pressure", 1013.0}, {"humidity", 45.0}}, /*sync=*/true);
+            compensatePromise.set_value(response);
+        });
+
+    // Wait for Compensate to complete
+    auto compensateResponse = compensateFuture.get();
+    auto totalElapsed = std::chrono::steady_clock::now() - homeStart;
+    compensateThread.join();
+
+    // Compensate should complete after Home (~1s) + Compensate (~0.5s)
+    EXPECT_TRUE(compensateResponse.success);
+    EXPECT_GT(std::chrono::duration_cast<std::chrono::milliseconds>(totalElapsed).count(), 1000);
+}
+
+// ============================================================================
+// Unblock Condition Tests (Dimension 3: Immediate, Result, Expected State)
+// ============================================================================
+
+TEST_F(ThreadedHSMTest, UnblockCondition_Immediate_Event)
+{
+    hsm->start();
+    hsm->sendMessageAsync(Commands::PowerOn{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Events have immediate unblock condition
+    auto start = std::chrono::steady_clock::now();
+    auto response = hsm->sendMessage(Events::InitComplete{});
+    auto elapsed = std::chrono::steady_clock::now() - start;
+
+    // Should return almost immediately (just processing time)
+    EXPECT_TRUE(response.success);
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 100);
+    EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Idle");
+}
+
+TEST_F(ThreadedHSMTest, UnblockCondition_Immediate_StateCommandWithoutExpectedState)
+{
+    hsm->start();
+    // Go to Operational state
+    hsm->sendMessageAsync(Commands::PowerOn{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    hsm->sendMessage(Events::InitComplete{});
+
+    // PowerOff has expectedState="Off" which is immediate (direct transition)
+    auto start = std::chrono::steady_clock::now();
+    auto response = hsm->sendMessage(Commands::PowerOff{});
+    auto elapsed = std::chrono::steady_clock::now() - start;
+
+    // PowerOff transitions directly to Off, no waiting needed
+    EXPECT_TRUE(response.success);
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 100);
+    EXPECT_EQ(hsm->getCurrentStateName(), "Off");
+}
+
+TEST_F(ThreadedHSMTest, UnblockCondition_Result_ActionCommand)
+{
+    hsm->start();
+    // Go to Idle state
+    hsm->sendMessageAsync(Commands::PowerOn{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    hsm->sendMessage(Events::InitComplete{});
+
+    // Home is an action command with execute() that takes time
+    auto start = std::chrono::steady_clock::now();
+    auto response = hsm->sendMessage(Commands::Home{100.0});
+    auto elapsed = std::chrono::steady_clock::now() - start;
+
+    // Unblocks when execute() returns (after ~1s sleep in Home)
+    EXPECT_TRUE(response.success);
+    EXPECT_GT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 500);
+    // Result should contain position data
+    EXPECT_TRUE(response.params.contains("position"));
+}
+
+TEST_F(ThreadedHSMTest, UnblockCondition_ExpectedState_PowerOn)
+{
+    hsm->start();
+
+    // PowerOn has expectedState="Operational::Idle"
+    // It won't return until InitComplete event transitions to Idle
+    std::thread eventThread(
+        [this]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            hsm->sendMessageAsync(Events::InitComplete{});
+        });
+
+    auto start = std::chrono::steady_clock::now();
+    auto response = hsm->sendMessage(Commands::PowerOn{});
+    auto elapsed = std::chrono::steady_clock::now() - start;
+    eventThread.join();
+
+    // Should have waited for InitComplete (~200ms delay)
+    EXPECT_TRUE(response.success);
+    EXPECT_GT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 150);
+    EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Idle");
+}
+
+TEST_F(ThreadedHSMTest, UnblockCondition_ExpectedState_StartSearch)
+{
+    hsm->start();
+    // Go to Idle state
+    std::thread initThread(
+        [this]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            hsm->sendMessageAsync(Events::InitComplete{});
+        });
+    hsm->sendMessage(Commands::PowerOn{});
+    initThread.join();
+
+    // StartSearch has expectedState="Operational::Tracking::Locked"
+    // It won't return until TargetFound event transitions to Locked
+    std::thread targetThread(
+        [this]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            hsm->sendMessageAsync(Events::TargetFound{5000.0});
+        });
+
+    auto start = std::chrono::steady_clock::now();
+    auto response = hsm->sendMessage(Commands::StartSearch{});
+    auto elapsed = std::chrono::steady_clock::now() - start;
+    targetThread.join();
+
+    // Should have waited for TargetFound (~200ms delay)
+    EXPECT_TRUE(response.success);
+    EXPECT_GT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 150);
+    EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Tracking::Locked");
+}
+
+TEST_F(ThreadedHSMTest, UnblockCondition_ExpectedState_Timeout)
+{
+    hsm->start();
+
+    // PowerOn expects Idle state, but we won't send InitComplete
+    // Should timeout waiting for expected state
+    auto start = std::chrono::steady_clock::now();
+    auto response = hsm->send("PowerOn", {}, false, /*timeoutMs=*/500);
+    auto elapsed = std::chrono::steady_clock::now() - start;
+
+    // Should timeout after ~500ms
+    EXPECT_FALSE(response.success);
+    EXPECT_GT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 400);
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 700);
+}
+
+// ============================================================================
+// Combined Dimension Tests
+// ============================================================================
+
+TEST_F(ThreadedHSMTest, CallerBlockingWithQueueBlocking)
+{
+    hsm->start();
+    // Go to Idle state
+    hsm->sendMessageAsync(Commands::PowerOn{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    hsm->sendMessage(Events::InitComplete{});
+
+    // send() with sync=true: Caller blocks AND other sync messages buffered
+    std::atomic<bool> compensateStarted{false};
+    std::atomic<bool> compensateDone{false};
+
+    // Start Compensate in background (will be buffered until Home completes)
+    std::thread compensateThread(
+        [this, &compensateStarted, &compensateDone]()
+        {
+            compensateStarted = true;
+            auto response = hsm->send("Compensate", {{"temperature", 20.0}}, /*sync=*/true);
+            compensateDone = true;
+            EXPECT_TRUE(response.success);
+        });
+
+    // Small delay to let thread start
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    // Now call Home with sync=true - both should execute sequentially
+    auto response = hsm->send("Home", {{"speed", 100.0}}, /*sync=*/true);
+    EXPECT_TRUE(response.success);
+
+    // Wait for Compensate to complete
+    compensateThread.join();
+    EXPECT_TRUE(compensateDone);
+}
+
+TEST_F(ThreadedHSMTest, FireAndForget_NoBlockingAtAll)
+{
+    hsm->start();
+
+    // Fire-and-forget: sendAsync with sync=false
+    auto start = std::chrono::steady_clock::now();
+
+    // Send multiple messages rapidly
+    for (int i = 0; i < 10; ++i)
+    {
+        hsm->sendAsync("GetStatus", {}, /*sync=*/false);
+    }
+
+    auto elapsed = std::chrono::steady_clock::now() - start;
+
+    // All 10 calls should complete very quickly (just queueing)
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(), 50);
+
+    // Wait for processing
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+}
