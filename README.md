@@ -531,6 +531,134 @@ sequenceDiagram
 | Callback | Callback runs on worker thread, not client thread |
 | **Promise/Future** | Clean API, automatic synchronization, timeout support |
 
+#### Pending Promises Management
+
+The `pendingPromises_` map tracks all outstanding synchronous requests, enabling the worker thread to find and fulfill the correct promise when a response is ready.
+
+```mermaid
+flowchart TB
+    subgraph Client ["Client Thread"]
+        C1[Create promise/future pair]
+        C2[Store promise in map by ID]
+        C3[Push message to queue]
+        C4[Wait on future]
+        C5[Receive response or timeout]
+    end
+
+    subgraph Map ["pendingPromises_ (mutex-protected)"]
+        M1[(id → promise)]
+    end
+
+    subgraph Worker ["Worker Thread"]
+        W1[Pop message from queue]
+        W2[Process message]
+        W3[Find promise by ID]
+        W4[Fulfill promise]
+        W5[Erase from map]
+    end
+
+    C1 --> C2
+    C2 --> M1
+    C2 --> C3
+    C3 --> C4
+
+    W1 --> W2
+    W2 --> W3
+    W3 --> M1
+    M1 --> W4
+    W4 --> W5
+    W4 --> C5
+```
+
+**Lifecycle of a Pending Promise:**
+
+| Step | Thread | Action | Map State |
+|------|--------|--------|-----------|
+| 1 | Client | `promise` created, `future` extracted | - |
+| 2 | Client | `pendingPromises_[id] = std::move(promise)` | `{id: promise}` |
+| 3 | Client | Message pushed to queue | `{id: promise}` |
+| 4 | Client | `future.wait_for(timeout)` blocks | `{id: promise}` |
+| 5 | Worker | Message popped and processed | `{id: promise}` |
+| 6 | Worker | `promise.set_value(response)` | `{id: promise}` |
+| 7 | Worker | `pendingPromises_.erase(id)` | `{}` |
+| 8 | Client | `future.get()` returns response | `{}` |
+
+**Timeout Handling:**
+
+When a client times out waiting for a response, cleanup is required to prevent resource leaks:
+
+```cpp
+// Client side - timeout occurred
+auto status = future.wait_for(std::chrono::milliseconds(timeoutMs));
+if (status != std::future_status::ready)
+{
+    // Timeout! Remove the orphaned promise
+    {
+        std::lock_guard<std::mutex> lock(promiseMutex_);
+        pendingPromises_.erase(id);  // Promise will never be fulfilled
+    }
+    return Message::createTimeoutResponse(id);
+}
+```
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Map as pendingPromises_
+    participant Worker
+
+    Client->>Map: Store promise (id=42)
+    Client->>Client: future.wait_for(1000ms)
+
+    Note over Worker: Still busy with<br/>previous message
+
+    Note over Client: Timeout expires!
+
+    Client->>Map: Erase promise (id=42)
+    Client->>Client: Return timeout response
+
+    Note over Worker: Eventually processes id=42
+    Worker->>Map: Find promise (id=42)
+    Map-->>Worker: NOT FOUND
+    Note over Worker: Promise already removed,<br/>response discarded
+```
+
+**Thread Safety:**
+
+The `pendingPromises_` map is protected by `promiseMutex_`:
+
+```cpp
+// All accesses are mutex-protected
+std::unordered_map<uint64_t, std::promise<Message>> pendingPromises_;
+std::mutex promiseMutex_;
+
+// Client thread - storing promise
+{
+    std::lock_guard<std::mutex> lock(promiseMutex_);
+    pendingPromises_[id] = std::move(promise);
+}
+
+// Worker thread - fulfilling promise
+{
+    std::lock_guard<std::mutex> lock(promiseMutex_);
+    auto it = pendingPromises_.find(msg.id);
+    if (it != pendingPromises_.end())
+    {
+        it->second.set_value(response);
+        pendingPromises_.erase(it);
+    }
+}
+```
+
+**Edge Cases Handled:**
+
+| Scenario | Handling |
+|----------|----------|
+| Message processed before timeout | Promise fulfilled, client receives response |
+| Timeout before processing | Promise removed by client, worker discards response |
+| Worker finds no promise | Response discarded (async message or already timed out) |
+| Multiple clients, same ID | IDs are unique (`nextMessageId_++`), never collides |
+
 ### The `sync` Flag: Blocking Other Messages
 
 The `sync` flag on action commands has a specific meaning: **the HSM should not process other messages until this command completes**.
