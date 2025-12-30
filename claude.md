@@ -74,6 +74,38 @@ When writing or editing markdown files (README.md, etc.):
 
 2. **Use consistent table alignment** - Align the pipe characters for readability in source
 
+3. **Mermaid diagrams: Avoid HTML entities and special characters** - Mermaid parsers do not handle HTML entities (`&lt;`, `&gt;`, `&amp;`) or angle brackets (`<`, `>`) well in labels
+
+   **Problematic patterns:**
+   ```mermaid
+   <!-- WRONG - causes parse errors -->
+   sequenceDiagram
+       Client->>Client: promise = std::promise<Message>()
+       Client->>Client: std::future&lt;Message&gt;
+
+   flowchart LR
+       P[std::promise<Message>]
+   ```
+
+   **Safe alternatives:**
+   ```mermaid
+   <!-- CORRECT - use simple labels -->
+   sequenceDiagram
+       Client->>Client: Create promise, extract future
+
+   flowchart LR
+       P[promise]
+
+   <!-- CORRECT - describe in surrounding text instead -->
+   ```
+
+   **Rules for Mermaid diagrams:**
+   - Never use `<` or `>` in node labels or message text
+   - Never use HTML entities (`&lt;`, `&gt;`, `&amp;`, etc.)
+   - Use simple descriptive text instead of C++ template syntax
+   - Put technical details (like `std::promise<Message>`) in surrounding markdown text, not in the diagram
+   - Test diagrams render correctly before committing
+
 ## README.md Maintenance
 
 **IMPORTANT**: The README.md file MUST be kept in sync with the codebase. Update README.md when making ANY of the following changes:

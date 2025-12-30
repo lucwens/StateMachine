@@ -340,16 +340,47 @@ sequenceDiagram
     ThreadedHSM-->>Client: {handled: true, stateChanged: false}
 ```
 
-### Synchronous vs Asynchronous Message Handling
+### Message Handling: Three Orthogonal Dimensions
 
-The HSM supports two modes of sending messages:
+The HSM message handling has three independent dimensions that can be combined:
 
-#### Asynchronous (Fire-and-Forget)
+```mermaid
+flowchart TB
+    subgraph Dimensions ["Three Orthogonal Dimensions"]
+        D1["<b>1. Caller Blocking</b><br/>Does the caller wait?<br/><code>send()</code> vs <code>sendAsync()</code>"]
+        D2["<b>2. Queue Blocking</b><br/>Are other messages buffered?<br/><code>sync</code> flag"]
+        D3["<b>3. Unblock Condition</b><br/>What triggers completion?<br/>Immediate / Result / State"]
+    end
+```
+
+| Dimension | Controlled By | Options |
+|-----------|---------------|---------|
+| **Caller Blocking** | API choice | `send()` (blocks) vs `sendAsync()` (returns immediately) |
+| **Queue Blocking** | `sync` flag | `true` (buffer other sync messages) vs `false` (process normally) |
+| **Unblock Condition** | Message type | Immediate, Result from `execute()`, or Expected State reached |
+
+#### Unblock Conditions Explained
+
+| Condition | Applies To | Unblocks When |
+|-----------|------------|---------------|
+| **Immediate** | Events, simple state commands | HSM processes the message |
+| **Result** | Action commands with `execute()` | `execute()` method returns |
+| **Expected State** | Commands with `expectedState` | Target state is reached (e.g., PowerOn waits for Idle) |
+
+### Message Sending Modes
+
+Based on these dimensions, there are four practical combinations:
+
+#### 1. Fire-and-Forget
+
+**API:** `sendAsync()` with `sync=false`
+
+The caller returns immediately. No response is available. The HSM processes the message and discards the result.
 
 ```cpp
 uint64_t id = tracker.sendMessageAsync(Events::TargetFound{5000.0});
 // Returns immediately, message processed in background
-// No response available
+// No response available - result discarded
 ```
 
 ```mermaid
@@ -372,16 +403,32 @@ sequenceDiagram
 **Use cases:**
 - Notifications that don't need confirmation
 - High-frequency events where latency matters
-- Events where the caller doesn't care about the result
+- Hardware events sent from interrupt handlers
 
-#### Synchronous (Wait for Response)
+#### 2. Caller-Blocking (Synchronous)
+
+**API:** `send()` or `sendMessage()`
+
+The caller blocks until the unblock condition is met. The unblock condition depends on the message type:
+
+| Message Type | Unblock Condition | Example |
+|--------------|-------------------|---------|
+| Event | Immediate (after HSM processes) | `InitComplete` |
+| Action Command | Result (after `execute()` returns) | `Home`, `GetPosition` |
+| State Command (no expectedState) | Immediate (after transition) | `PowerOff` |
+| State Command (with expectedState) | Expected State reached | `PowerOn` → waits for Idle |
 
 ```cpp
+// Blocks until Home.execute() returns
 Message response = tracker.sendMessage(Commands::Home{50.0});
-// Blocks until HSM processes and returns result
-if (response.success) {
+if (response.success)
+{
     std::cout << "Position: " << response.params.dump() << "\n";
 }
+
+// Blocks until Idle state is reached (after InitComplete event)
+Message response2 = tracker.sendMessage(Commands::PowerOn{});
+// Only returns when system is fully initialized and in Idle state
 ```
 
 ```mermaid
@@ -403,6 +450,81 @@ sequenceDiagram
     Client->>Client: Process response.success,<br/>response.params, response.error
 ```
 
+#### 3. Non-Blocking Caller with Queue Blocking
+
+**API:** `sendAsync()` with `sync=true`
+
+The caller returns immediately, but the HSM buffers other sync messages until this message completes. This is useful for long-running operations where the caller doesn't need the result but other operations should wait.
+
+```cpp
+// Returns immediately - caller can continue
+tracker.sendAsync("Home", {{"speed", 50.0}}, /*sync=*/ true);
+
+// Caller can push more commands immediately
+tracker.sendAsync("GetPosition", {}, /*sync=*/ false);  // This will be processed
+tracker.sendAsync("Compensate", {...}, /*sync=*/ true); // This will be BUFFERED
+
+// The Compensate command waits until Home completes
+```
+
+```mermaid
+sequenceDiagram
+    participant Client as Client Thread
+    participant Queue as Message Queue
+    participant Buffer as Message Buffer
+    participant Worker as HSM Worker
+
+    Client->>Queue: sendAsync(Home, sync=true)
+    Note over Client: Returns immediately
+
+    Client->>Queue: sendAsync(GetPosition, sync=false)
+    Client->>Queue: sendAsync(Compensate, sync=true)
+    Note over Client: All calls return immediately
+
+    Queue-->>Worker: Dequeue Home
+    Note over Worker: syncMessageInProgress = true
+
+    Queue-->>Worker: Dequeue GetPosition
+    Note over Worker: sync=false, process normally
+    Worker->>Worker: Execute GetPosition
+
+    Queue-->>Worker: Dequeue Compensate
+    Note over Worker: sync=true but sync in progress
+    Worker->>Buffer: Buffer Compensate
+
+    Worker->>Worker: Execute Home (takes time)
+    Note over Worker: Home completes
+
+    Note over Worker: syncMessageInProgress = false
+    Worker->>Buffer: Process buffered messages
+    Buffer-->>Worker: Compensate
+    Worker->>Worker: Execute Compensate
+```
+
+**Important:** Only messages with `sync=true` are buffered. Non-sync messages are processed immediately even during a sync operation.
+
+#### 4. Caller-Blocking with Queue Blocking
+
+**API:** `send()` with `sync=true`
+
+The caller blocks AND other sync messages are buffered. This is the most restrictive mode, used for critical operations.
+
+```cpp
+// Caller blocks AND other sync messages are buffered
+Message response = tracker.send("Home", {{"speed", 50.0}}, /*sync=*/ true);
+// Only returns when Home completes
+// Other sync messages sent during this time were buffered
+```
+
+### Summary: Choosing a Message Mode
+
+| Mode | API | sync | Caller | Queue | Use Case |
+|------|-----|------|--------|-------|----------|
+| Fire-and-Forget | `sendAsync()` | `false` | Returns | Normal | High-frequency events, notifications |
+| Caller-Blocking | `send()` | `false` | Blocks | Normal | Quick queries needing response |
+| Non-Blocking + Queue | `sendAsync()` | `true` | Returns | Buffers sync | Long ops, caller doesn't need result |
+| Both Blocking | `send()` | `true` | Blocks | Buffers sync | Critical ops needing result |
+
 #### How Futures and Promises Work
 
 The synchronous message pattern uses C++ `std::promise` and `std::future` to safely pass results between threads. This is a **one-time, one-way communication channel**:
@@ -410,11 +532,11 @@ The synchronous message pattern uses C++ `std::promise` and `std::future` to saf
 ```mermaid
 flowchart LR
     subgraph Producer ["Worker Thread (Producer)"]
-        P[std::promise&lt;Message&gt;]
+        P[promise]
     end
 
     subgraph Consumer ["Client Thread (Consumer)"]
-        F[std::future&lt;Message&gt;]
+        F[future]
     end
 
     P -->|"set_value(response)"| SS[(Shared State)]
@@ -493,8 +615,7 @@ sequenceDiagram
     participant Worker as Worker Thread
 
     Note over Client: Create promise/future pair
-    Client->>Client: promise = std::promise&lt;Message&gt;()
-    Client->>Client: future = promise.get_future()
+    Client->>Client: Create promise, extract future
 
     Client->>Map: Store promise by message ID
     Client->>Queue: Push message
@@ -663,36 +784,6 @@ std::mutex promiseMutex_;
 | Worker finds no promise | Response discarded (async message or already timed out) |
 | Multiple clients, same ID | IDs are unique (`nextMessageId_++`), never collides |
 
-### The `sync` Flag: Blocking Other Messages
-
-The `sync` flag on action commands has a specific meaning: **the HSM should not process other messages until this command completes**.
-
-This is important for commands that take time to execute (like `Home` or `Compensate`) where interleaving other commands could cause issues.
-
-```mermaid
-sequenceDiagram
-    participant C1 as Client 1
-    participant C2 as Client 2
-    participant Queue as Message Queue
-    participant Buffer as Message Buffer
-    participant Worker as HSM Worker
-
-    C1->>Queue: Home{sync=true}
-    Note over Worker: syncMessageInProgress = true
-
-    C2->>Queue: GetPosition{}
-    Queue-->>Worker: Dequeue GetPosition
-    Worker->>Buffer: Buffer message (sync in progress)
-
-    Worker->>Worker: Execute Home (takes time)
-    Note over Worker: Home completes
-
-    Note over Worker: syncMessageInProgress = false
-    Worker->>Buffer: Process buffered messages
-    Buffer-->>Worker: GetPosition
-    Worker->>Worker: Execute GetPosition
-```
-
 ### Result Structure by Message Type
 
 Each message type returns different result data:
@@ -850,15 +941,6 @@ sequenceDiagram
 | `ReturnToIdle` | Idle | Idle | (immediate) |
 
 **Timeout Behavior:** If the expected state is not reached within the message timeout (default 30 seconds), the command returns with `success=false` and an error message.
-
-### Summary: When to Use Each Pattern
-
-| Pattern | Use When | Example |
-|---------|----------|---------|
-| `sendMessageAsync()` | Don't need response, fire-and-forget | Sending periodic `MeasurementComplete` events |
-| `sendMessage()` with `sync=false` | Need response but command is fast | `GetPosition`, `GetStatus` |
-| `sendMessage()` with `sync=true` | Need response AND command takes time | `Home`, `Compensate` |
-| Timeout | Protecting against HSM hangs | Any synchronous call in production |
 
 ## C++ Programming Patterns Used
 
