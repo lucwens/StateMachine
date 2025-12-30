@@ -196,7 +196,7 @@ The `ThreadedHSM` class provides complete galvanic separation between the UI/mai
 
 ### JSON Message Protocol
 
-Messages use a unified JSON format for both requests and responses:
+Messages use a unified JSON format for both requests and responses. Each message includes a **timestamp** (created automatically using `std::chrono::steady_clock`) for tracking message age and timeout handling.
 
 **Request Format:**
 ```json
@@ -205,7 +205,8 @@ Messages use a unified JSON format for both requests and responses:
   "name": "Home",
   "params": { "speed": 100.0 },
   "sync": true,
-  "timeoutMs": 5000
+  "timeoutMs": 5000,
+  "timestampMs": 0
 }
 ```
 
@@ -213,11 +214,20 @@ Messages use a unified JSON format for both requests and responses:
 ```json
 {
   "id": 1,
+  "isResponse": true,
   "success": true,
   "result": { "position": { "azimuth": 0.0, "elevation": 0.0 } },
-  "error": null
+  "error": null,
+  "timestampMs": 42
 }
 ```
+
+**Message Timing Features:**
+- `timestampMs`: Age of message in milliseconds (time since creation)
+- `timeoutMs`: Maximum wait time for response (0 = no timeout)
+- `isTimedOut()`: Check if message exceeded its timeout
+- `remainingTime()`: Get time left before timeout
+- `ageMs()`: Get current age of message
 
 ### Usage Example
 
