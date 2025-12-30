@@ -381,6 +381,133 @@ void demoCompleteWorkflow()
     std::cout << "\nDemo 6 completed successfully!\n";
 }
 
+/**
+ * @brief Demo 7: State-Changing Command Sync Behavior
+ *
+ * Demonstrates that state-changing commands with sync=true block other messages
+ * while sync=false commands allow interleaving
+ */
+void demoStateChangingSync()
+{
+    printSeparator("DEMO 7: State-Changing Command Sync Behavior");
+
+    std::cout << R"(
+This demo shows the difference between state-changing commands with sync=true vs sync=false:
+  - PowerOn (sync=true): Blocks other messages during power-on
+  - Reset (sync=true): Blocks other messages during reset
+  - StartSearch (sync=false): Allows other messages to be processed
+
+We'll use timestamps to show the ordering of message processing.
+)" << std::endl;
+
+    ThreadedHSM tracker;
+    tracker.start();
+
+    auto getTimestamp = []() -> std::string
+    {
+        auto now    = std::chrono::steady_clock::now();
+        auto ms     = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 100000;
+        char buf[16];
+        snprintf(buf, sizeof(buf), "[%05lld ms]", static_cast<long long>(ms));
+        return buf;
+    };
+
+    // -------------------------------------------------------------------------
+    std::cout << "\n=== Test 1: PowerOn with sync=true ===\n";
+    std::cout << "Sending PowerOn (sync=true) followed immediately by GetStatus.\n";
+    std::cout << "GetStatus should wait until PowerOn completes.\n\n";
+
+    std::cout << getTimestamp() << " Main: Sending PowerOn async...\n";
+    tracker.sendMessageAsync(Commands::PowerOn{});
+
+    std::cout << getTimestamp() << " Main: Immediately sending GetStatus...\n";
+    auto statusResp = tracker.sendMessage(Commands::GetStatus{});
+    std::cout << getTimestamp() << " Main: GetStatus returned: " << statusResp.params.dump() << "\n";
+
+    // Complete initialization
+    tracker.sendMessage(Events::InitComplete{});
+    std::cout << getTimestamp() << " State: " << tracker.getCurrentStateName() << "\n";
+
+    // -------------------------------------------------------------------------
+    std::cout << "\n=== Test 2: StartSearch with sync=false ===\n";
+    std::cout << "Sending StartSearch (sync=false) followed immediately by GetPosition.\n";
+    std::cout << "Both should process without blocking.\n\n";
+
+    std::cout << getTimestamp() << " Main: Sending StartSearch async...\n";
+    tracker.sendMessageAsync(Commands::StartSearch{});
+
+    std::cout << getTimestamp() << " Main: Immediately sending GetPosition...\n";
+    auto posResp = tracker.sendMessage(Commands::GetPosition{});
+    std::cout << getTimestamp() << " Main: GetPosition returned: " << (posResp.success ? "success" : posResp.error) << "\n";
+
+    std::cout << getTimestamp() << " State: " << tracker.getCurrentStateName() << "\n";
+
+    // Find target and go to Locked
+    tracker.sendMessage(Events::TargetFound{3000.0});
+
+    // -------------------------------------------------------------------------
+    std::cout << "\n=== Test 3: Simulating Error and Reset (sync=true) ===\n";
+    std::cout << "Triggering error, then Reset (sync=true) with concurrent GetStatus.\n\n";
+
+    std::cout << getTimestamp() << " Main: Triggering error...\n";
+    tracker.sendMessage(Events::ErrorOccurred{42, "Simulated error for demo"});
+    std::cout << getTimestamp() << " State: " << tracker.getCurrentStateName() << "\n";
+
+    std::cout << getTimestamp() << " Main: Sending Reset async (sync=true)...\n";
+    tracker.sendMessageAsync(Commands::Reset{});
+
+    std::cout << getTimestamp() << " Main: Immediately sending GetStatus...\n";
+    statusResp = tracker.sendMessage(Commands::GetStatus{});
+    std::cout << getTimestamp() << " Main: GetStatus returned: " << statusResp.params.dump() << "\n";
+    std::cout << getTimestamp() << " State: " << tracker.getCurrentStateName() << "\n";
+
+    // -------------------------------------------------------------------------
+    std::cout << "\n=== Test 4: Multiple threads with sync commands ===\n";
+    std::cout << "Two threads: one sends PowerOff (sync=false), other sends GetStatus.\n\n";
+
+    // First complete init again
+    tracker.sendMessage(Events::InitComplete{});
+    std::cout << getTimestamp() << " State before test: " << tracker.getCurrentStateName() << "\n";
+
+    std::thread t1(
+        [&tracker, &getTimestamp]()
+        {
+            std::cout << getTimestamp() << " Thread1: Sending PowerOff...\n";
+            auto resp = tracker.sendMessage(Commands::PowerOff{});
+            std::cout << getTimestamp() << " Thread1: PowerOff completed, success=" << (resp.success ? "true" : "false") << "\n";
+        });
+
+    std::thread t2(
+        [&tracker, &getTimestamp]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Slight delay
+            std::cout << getTimestamp() << " Thread2: Sending GetStatus...\n";
+            auto resp = tracker.sendMessage(Commands::GetStatus{});
+            std::cout << getTimestamp() << " Thread2: GetStatus completed, state=" << resp.params.value("state", "unknown") << "\n";
+        });
+
+    t1.join();
+    t2.join();
+
+    std::cout << getTimestamp() << " Final state: " << tracker.getCurrentStateName() << "\n";
+
+    // -------------------------------------------------------------------------
+    std::cout << "\n=== Summary ===\n";
+    std::cout << R"(
+State-Changing Commands with sync flag:
+  - PowerOn (sync=true):  Blocks GetStatus until power-on transition completes
+  - Reset (sync=true):    Blocks GetStatus until reset transition completes
+  - StartSearch (sync=false): GetPosition can execute immediately
+  - PowerOff (sync=false): Other commands can interleave
+
+The sync flag on state-changing commands ensures critical transitions
+complete atomically without interference from other messages.
+)" << std::endl;
+
+    tracker.stop();
+    std::cout << "\nDemo 7 completed successfully!\n";
+}
+
 // ============================================================================
 // Interactive Mode
 // ============================================================================
@@ -660,12 +787,13 @@ separation between the main/UI thread and the state machine engine.
   4. JSON Message Protocol
   5. Multi-threaded Event Sending
   6. Complete Workflow
+  7. State-Changing Command Sync Behavior
 
 === Interactive Mode ===
-  7. Interactive Mode (with full command support)
+  8. Interactive Mode (with full command support)
 
 === Batch Operations ===
-  8. Run All Demos
+  9. Run All Demos
 
   0. Exit
 
@@ -686,6 +814,7 @@ int main(int argc, char* argv[])
             demoJsonProtocol();
             demoMultiThreaded();
             demoCompleteWorkflow();
+            demoStateChangingSync();
             printSeparator("ALL DEMOS COMPLETED SUCCESSFULLY");
             return 0;
         }
@@ -694,12 +823,18 @@ int main(int argc, char* argv[])
             runInteractiveMode();
             return 0;
         }
+        else if (arg == "--sync-demo" || arg == "-s")
+        {
+            demoStateChangingSync();
+            return 0;
+        }
         else if (arg == "--help" || arg == "-h")
         {
             std::cout << "Usage: " << argv[0] << " [options]\n"
                       << "Options:\n"
                       << "  --all, -a          Run all demos\n"
                       << "  --interactive, -i  Run interactive mode\n"
+                      << "  --sync-demo, -s    Run sync behavior demo\n"
                       << "  --help, -h         Show this help\n"
                       << "  (no args)          Show menu\n";
             return 0;
@@ -745,15 +880,19 @@ int main(int argc, char* argv[])
                 demoCompleteWorkflow();
                 break;
             case 7:
-                runInteractiveMode();
+                demoStateChangingSync();
                 break;
             case 8:
+                runInteractiveMode();
+                break;
+            case 9:
                 demoThreadedBasic();
                 demoCommands();
                 demoCommandBuffering();
                 demoJsonProtocol();
                 demoMultiThreaded();
                 demoCompleteWorkflow();
+                demoStateChangingSync();
                 printSeparator("ALL DEMOS COMPLETED SUCCESSFULLY");
                 break;
             default:
