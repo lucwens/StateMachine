@@ -5,6 +5,7 @@
 
 #include <gtest/gtest.h>
 #include "../ThreadedHSM.hpp"
+#include <thread>
 
 using namespace LaserTracker;
 
@@ -25,15 +26,29 @@ class ActionCommandTest : public ::testing::Test
 
     void goToIdle()
     {
+        // PowerOn waits for expectedState=Idle, so send InitComplete from a thread
+        std::thread eventThread(
+            [this]()
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                hsm.sendMessageAsync(Events::InitComplete{});
+            });
         hsm.sendMessage(Commands::PowerOn{});
-        hsm.sendMessage(Events::InitComplete{});
+        eventThread.join();
     }
 
     void goToLocked()
     {
         goToIdle();
+        // StartSearch waits for expectedState=Locked, so send TargetFound from a thread
+        std::thread eventThread(
+            [this]()
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                hsm.sendMessageAsync(Events::TargetFound{5000.0});
+            });
         hsm.sendMessage(Commands::StartSearch{});
-        hsm.sendMessage(Events::TargetFound{5000.0});
+        eventThread.join();
     }
 
     void goToMeasuring()

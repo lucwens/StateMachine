@@ -230,77 +230,84 @@ namespace LaserTracker
         // State-Changing Commands
         // --------------------------------------------------------------------
 
-        /** @brief Turn on the laser tracker power. Sync: Yes (blocks until transition complete) */
+        /** @brief Turn on the laser tracker power. Waits for Idle state (after InitComplete) */
         struct PowerOn
         {
-            static constexpr const char* name = "PowerOn";
-            static constexpr bool        sync = true; // Block other messages during power-on sequence
+            static constexpr const char* name          = "PowerOn";
+            static constexpr bool        sync          = true;
+            static constexpr const char* expectedState = "Operational::Idle"; // Wait for InitComplete event
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const PowerOn&) { j = nlohmann::json::object(); }
             friend void from_json(const nlohmann::json&, PowerOn&) {}
         };
 
-        /** @brief Turn off the laser tracker power. Sync: No */
+        /** @brief Turn off the laser tracker power. Immediate transition to Off */
         struct PowerOff
         {
-            static constexpr const char* name = "PowerOff";
-            static constexpr bool        sync = false;
+            static constexpr const char* name          = "PowerOff";
+            static constexpr bool        sync          = false;
+            static constexpr const char* expectedState = "Off"; // Immediate
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const PowerOff&) { j = nlohmann::json::object(); }
             friend void from_json(const nlohmann::json&, PowerOff&) {}
         };
 
-        /** @brief Start searching for target. Sync: No */
+        /** @brief Start searching for target. Waits for Locked state (after TargetFound) */
         struct StartSearch
         {
-            static constexpr const char* name = "StartSearch";
-            static constexpr bool        sync = false;
+            static constexpr const char* name          = "StartSearch";
+            static constexpr bool        sync          = true;
+            static constexpr const char* expectedState = "Operational::Tracking::Locked"; // Wait for TargetFound event
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const StartSearch&) { j = nlohmann::json::object(); }
             friend void from_json(const nlohmann::json&, StartSearch&) {}
         };
 
-        /** @brief Start precision measurement. Sync: No */
+        /** @brief Start precision measurement. Immediate transition to Measuring */
         struct StartMeasure
         {
-            static constexpr const char* name = "StartMeasure";
-            static constexpr bool        sync = false;
+            static constexpr const char* name          = "StartMeasure";
+            static constexpr bool        sync          = false;
+            static constexpr const char* expectedState = "Operational::Tracking::Measuring"; // Immediate
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const StartMeasure&) { j = nlohmann::json::object(); }
             friend void from_json(const nlohmann::json&, StartMeasure&) {}
         };
 
-        /** @brief Stop measurement and return to locked. Sync: No */
+        /** @brief Stop measurement and return to locked. Immediate transition to Locked */
         struct StopMeasure
         {
-            static constexpr const char* name = "StopMeasure";
-            static constexpr bool        sync = false;
+            static constexpr const char* name          = "StopMeasure";
+            static constexpr bool        sync          = false;
+            static constexpr const char* expectedState = "Operational::Tracking::Locked"; // Immediate
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const StopMeasure&) { j = nlohmann::json::object(); }
             friend void from_json(const nlohmann::json&, StopMeasure&) {}
         };
 
-        /** @brief Reset the system from error state. Sync: Yes (blocks until reset complete) */
+        /** @brief Reset the system from error state. Waits for Idle state (after InitComplete) */
         struct Reset
         {
-            static constexpr const char* name = "Reset";
-            static constexpr bool        sync = true; // Block other messages during reset sequence
+            static constexpr const char* name          = "Reset";
+            static constexpr bool        sync          = true;
+            static constexpr const char* expectedState = "Operational::Idle"; // Wait for InitComplete event
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const Reset&) { j = nlohmann::json::object(); }
             friend void from_json(const nlohmann::json&, Reset&) {}
         };
 
-        /** @brief Return from tracking to idle state. Sync: No */
+        /** @brief Return from tracking to idle state. Immediate transition to Idle */
         struct ReturnToIdle
         {
-            static constexpr const char* name = "ReturnToIdle";
-            static constexpr bool        sync = false;
+            static constexpr const char* name          = "ReturnToIdle";
+            static constexpr bool        sync          = false;
+            static constexpr const char* expectedState = "Operational::Idle"; // Immediate
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const ReturnToIdle&) { j = nlohmann::json::object(); }
@@ -643,7 +650,45 @@ namespace LaserTracker
         {
         };
 
+        // C++17-compatible detection of expectedState member (state-changing commands that wait for a state)
+        template <typename T, typename = void>
+        struct has_expected_state : std::false_type
+        {
+        };
+
+        template <typename T>
+        struct has_expected_state<T, std::void_t<decltype(T::expectedState)>> : std::true_type
+        {
+        };
+
+        /**
+         * @brief Get the expected state from a message variant
+         * @return Expected state string, or empty string if no expectedState defined
+         */
+        static std::string getExpectedState(const Variant& msg)
+        {
+            return std::visit(
+                [](const auto& m) -> std::string
+                {
+                    using M = std::decay_t<decltype(m)>;
+                    return getExpectedStateValue<M>();
+                },
+                msg);
+        }
+
     private:
+        template <typename T>
+        static std::string getExpectedStateValue()
+        {
+            if constexpr (has_expected_state<T>::value)
+            {
+                return T::expectedState;
+            }
+            else
+            {
+                return "";
+            }
+        }
         template <typename T>
         static constexpr bool getSyncValue()
         {
@@ -1704,6 +1749,18 @@ namespace LaserTracker
         std::unordered_map<uint64_t, std::promise<Message>> pendingPromises_;
         std::mutex                                          promiseMutex_;
 
+        // Pending state expectations (waiting for a specific state to be reached)
+        struct StateExpectation
+        {
+            uint64_t                    messageId;
+            std::string                 expectedState;
+            std::chrono::steady_clock::time_point deadline;
+            std::promise<Message>       promise;
+            Message                     originalMessage;
+        };
+        std::vector<StateExpectation> pendingStateExpectations_;
+        std::mutex                    stateExpectationsMutex_;
+
         // --------------------------------------------------------------------
         // Worker Thread Loop
         // --------------------------------------------------------------------
@@ -1719,6 +1776,8 @@ namespace LaserTracker
                     auto pending = messageQueue_.waitPopFor(std::chrono::milliseconds(100));
                     if (!pending)
                     {
+                        // No message, but check for state expectation timeouts
+                        checkStateExpectations();
                         continue;
                     }
 
@@ -1771,8 +1830,34 @@ namespace LaserTracker
             // Process the message - try as state command first, then as action command
             Message response = processMessageContent(msg);
 
-            // Send response if needed
-            if (msg.needsReply)
+            // After any message processing, check if any pending state expectations are now satisfied
+            checkStateExpectations();
+
+            // Check if this is a state-changing command with expectedState
+            bool deferResponse = false;
+            std::string expectedState;
+
+            auto stateMsg = paramsToStateMessage(msg.name, msg.params);
+            if (stateMsg && response.success)
+            {
+                expectedState = StateMessageRegistry::getExpectedState(*stateMsg);
+                if (!expectedState.empty())
+                {
+                    std::string currentState = getCurrentStateName();
+                    bool stateMatches = (currentState == expectedState) ||
+                                        (currentState.find(expectedState) != std::string::npos);
+
+                    if (!stateMatches && msg.needsReply)
+                    {
+                        // State not yet reached - defer response until expected state is reached
+                        deferResponse = true;
+                        std::cout << "[HSM Thread] Expected state '" << expectedState << "' not yet reached (current: " << currentState << "), deferring response\n";
+                    }
+                }
+            }
+
+            // Send response if needed (and not deferred)
+            if (msg.needsReply && !deferResponse)
             {
                 // Check if there's a promise waiting
                 {
@@ -1790,8 +1875,19 @@ namespace LaserTracker
                     }
                 }
             }
+            else if (deferResponse)
+            {
+                // Move promise to state expectations
+                std::lock_guard<std::mutex> lock(promiseMutex_);
+                auto                        it = pendingPromises_.find(msg.id);
+                if (it != pendingPromises_.end())
+                {
+                    registerStateExpectation(msg, expectedState, std::move(it->second));
+                    pendingPromises_.erase(it);
+                }
+            }
 
-            // If this was a sync message and it completed, process buffered messages
+            // If this was a sync message and it completed (or deferred), process buffered messages
             if (msg.sync)
             {
                 syncMessageInProgress_.store(false);
@@ -1906,6 +2002,79 @@ namespace LaserTracker
         // --------------------------------------------------------------------
         // Helper Methods
         // --------------------------------------------------------------------
+
+        /**
+         * @brief Check if any pending state expectations are satisfied by the current state
+         * Called after every state change to fulfill waiting promises
+         */
+        void checkStateExpectations()
+        {
+            std::string currentState = getCurrentStateName();
+
+            std::lock_guard<std::mutex> lock(stateExpectationsMutex_);
+
+            // Check each pending expectation
+            auto it = pendingStateExpectations_.begin();
+            while (it != pendingStateExpectations_.end())
+            {
+                // Check if current state matches or contains the expected state
+                bool stateMatches = (currentState == it->expectedState) ||
+                                    (currentState.find(it->expectedState) != std::string::npos);
+
+                // Check if deadline has passed
+                bool timedOut = std::chrono::steady_clock::now() >= it->deadline;
+
+                if (stateMatches)
+                {
+                    // State reached! Fulfill the promise with success
+                    std::cout << "[HSM Thread] State expectation fulfilled: '" << it->expectedState << "' reached for message id=" << it->messageId << "\n";
+
+                    Json result;
+                    result[Keys::Handled]      = true;
+                    result[Keys::State]        = currentState;
+                    result[Keys::StateChanged] = true;
+
+                    it->promise.set_value(Message::createResponse(it->messageId, true, result));
+                    it = pendingStateExpectations_.erase(it);
+                }
+                else if (timedOut)
+                {
+                    // Timeout! Fulfill the promise with error
+                    std::cout << "[HSM Thread] State expectation timeout: '" << it->expectedState << "' not reached for message id=" << it->messageId
+                              << " (current: " << currentState << ")\n";
+
+                    it->promise.set_value(Message::createResponse(
+                        it->messageId, false, {},
+                        "Timeout waiting for state '" + it->expectedState + "' (current: " + currentState + ")"));
+                    it = pendingStateExpectations_.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
+
+        /**
+         * @brief Register a state expectation for deferred response
+         * @param msg The original message
+         * @param expectedState The state to wait for
+         * @param promise The promise to fulfill when state is reached
+         */
+        void registerStateExpectation(const Message& msg, const std::string& expectedState, std::promise<Message> promise)
+        {
+            StateExpectation expectation;
+            expectation.messageId      = msg.id;
+            expectation.expectedState  = expectedState;
+            expectation.deadline       = std::chrono::steady_clock::now() + std::chrono::milliseconds(msg.timeoutMs > 0 ? msg.timeoutMs : 30000); // Default 30s
+            expectation.promise        = std::move(promise);
+            expectation.originalMessage = msg;
+
+            std::lock_guard<std::mutex> lock(stateExpectationsMutex_);
+            pendingStateExpectations_.push_back(std::move(expectation));
+
+            std::cout << "[HSM Thread] Registered state expectation: waiting for '" << expectedState << "' (message id=" << msg.id << ")\n";
+        }
 
         void queueMessage(Message msg)
         {

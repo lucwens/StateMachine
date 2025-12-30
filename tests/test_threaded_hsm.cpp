@@ -93,31 +93,71 @@ TEST_F(ThreadedHSMTest, MultipleAsyncMessagesProcessedInOrder)
 }
 
 // ============================================================================
-// Sync Command Tests
+// Sync Command Tests (with Expected State behavior)
 // ============================================================================
 
 TEST_F(ThreadedHSMTest, SendCommandSyncReturnsResponse)
 {
     hsm->start();
+    // PowerOn now waits for Idle state, so we need to send InitComplete from another thread
+    std::thread eventThread(
+        [this]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            hsm->sendMessageAsync(Events::InitComplete{});
+        });
+
     auto response = hsm->sendMessage(Commands::PowerOn{});
+    eventThread.join();
+
     EXPECT_TRUE(response.success);
+    EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Idle");
 }
 
-TEST_F(ThreadedHSMTest, SyncCommandWaitsForCompletion)
+TEST_F(ThreadedHSMTest, SyncCommandWaitsForExpectedState)
 {
     hsm->start();
+    // PowerOn with expectedState=Idle waits until InitComplete transitions to Idle
+    std::thread eventThread(
+        [this]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            hsm->sendMessageAsync(Events::InitComplete{});
+        });
+
     auto response = hsm->sendMessage(Commands::PowerOn{});
-    EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Initializing");
+    eventThread.join();
+
+    // Now state should be Idle (not Initializing) because we waited for expectedState
+    EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Idle");
 }
 
 TEST_F(ThreadedHSMTest, SyncCommandReturnsCorrectState)
 {
     hsm->start();
+    // PowerOn waits for Idle
+    std::thread initThread(
+        [this]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            hsm->sendMessageAsync(Events::InitComplete{});
+        });
     hsm->sendMessage(Commands::PowerOn{});
-    hsm->sendMessage(Events::InitComplete{});
+    initThread.join();
+
+    // StartSearch waits for Locked
+    std::thread targetThread(
+        [this]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            hsm->sendMessageAsync(Events::TargetFound{5000.0});
+        });
     auto response = hsm->sendMessage(Commands::StartSearch{});
+    targetThread.join();
+
     EXPECT_TRUE(response.success);
-    EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Tracking::Searching");
+    // Now state should be Locked (because StartSearch waited for TargetFound)
+    EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Tracking::Locked");
 }
 
 // ============================================================================
@@ -127,11 +167,19 @@ TEST_F(ThreadedHSMTest, SyncCommandReturnsCorrectState)
 TEST_F(ThreadedHSMTest, ConcurrentAsyncEventsAreSafe)
 {
     hsm->start();
-    hsm->sendMessage(Commands::PowerOn{});
+    // Setup to Measuring state using async/threads for commands with expectedState
+    hsm->sendMessageAsync(Commands::PowerOn{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     hsm->sendMessage(Events::InitComplete{});
-    hsm->sendMessage(Commands::StartSearch{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    hsm->sendMessageAsync(Commands::StartSearch{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     hsm->sendMessage(Events::TargetFound{5000.0});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
     hsm->sendMessage(Commands::StartMeasure{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     std::atomic<int> eventsSent{0};
     std::vector<std::thread> threads;
@@ -167,7 +215,8 @@ TEST_F(ThreadedHSMTest, ConcurrentAsyncEventsAreSafe)
 TEST_F(ThreadedHSMTest, GetCurrentStateNameIsThreadSafe)
 {
     hsm->start();
-    hsm->sendMessage(Commands::PowerOn{});
+    // Use async for PowerOn since it has expectedState
+    hsm->sendMessageAsync(Commands::PowerOn{});
 
     std::atomic<bool> running{true};
     std::vector<std::thread> readers;
@@ -186,9 +235,10 @@ TEST_F(ThreadedHSMTest, GetCurrentStateNameIsThreadSafe)
             });
     }
 
-    // Change state while readers are running
+    // Change state while readers are running (use async for commands with expectedState)
     hsm->sendMessage(Events::InitComplete{});
-    hsm->sendMessage(Commands::StartSearch{});
+    hsm->sendMessageAsync(Commands::StartSearch{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     hsm->sendMessage(Events::TargetFound{5000.0});
 
     running = false;
@@ -214,9 +264,13 @@ TEST_F(ThreadedHSMTest, SendJsonMessageParsesCorrectly)
 TEST_F(ThreadedHSMTest, SendJsonMessageWithParams)
 {
     hsm->start();
-    hsm->sendMessage(Commands::PowerOn{});
+    // Use async for commands with expectedState to avoid blocking
+    hsm->sendMessageAsync(Commands::PowerOn{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     hsm->sendMessage(Events::InitComplete{});
-    hsm->sendMessage(Commands::StartSearch{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    hsm->sendMessageAsync(Commands::StartSearch{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     std::string json = R"({"id": 101, "name": "TargetFound", "params": {"distance_mm": 3000.0}, "sync": false})";
     hsm->sendJsonMessage(json);
@@ -238,7 +292,13 @@ TEST_F(ThreadedHSMTest, TryGetResponseReturnsNulloptWhenEmpty)
 TEST_F(ThreadedHSMTest, ResponsesAreQueued)
 {
     hsm->start();
-    std::string json = R"({"id": 200, "name": "PowerOn", "sync": false, "needsReply": true})";
+    // Use PowerOff (expectedState=Off, immediate) which doesn't wait for external events
+    // First go to a state where PowerOff is valid
+    hsm->sendMessageAsync(Commands::PowerOn{});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    // Send PowerOff with needsReply via JSON - this should return immediately
+    std::string json = R"({"id": 200, "name": "PowerOff", "sync": false, "needsReply": true})";
     hsm->sendJsonMessage(json);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
@@ -298,11 +358,22 @@ TEST_F(ThreadedHSMTest, GetCurrentStateNameAfterStart)
 TEST_F(ThreadedHSMTest, StateUpdatesVisibleImmediatelyAfterSync)
 {
     hsm->start();
+    // PowerOn with expectedState=Idle waits until InitComplete, so use threads
+    std::thread eventThread(
+        [this]()
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            hsm->sendMessageAsync(Events::InitComplete{});
+        });
     hsm->sendMessage(Commands::PowerOn{});
-    EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Initializing");
+    eventThread.join();
 
-    hsm->sendMessage(Events::InitComplete{});
+    // After PowerOn returns, state should be Idle (because it waited for expectedState)
     EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Idle");
+
+    // Events don't have expectedState, so this still returns immediately
+    hsm->sendMessage(Events::ErrorOccurred{99, "test"});
+    EXPECT_EQ(hsm->getCurrentStateName(), "Operational::Error");
 }
 
 // ============================================================================

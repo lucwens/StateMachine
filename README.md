@@ -39,15 +39,17 @@ Commands are instructions sent to the FSM to drive specific outcomes.
 
 **State-Changing Commands:**
 
-| Command | Sync | Description |
-|---------|------|-------------|
-| `PowerOn` | Yes | Turn on the laser tracker (blocks other messages during power-on) |
-| `PowerOff` | No | Turn off the laser tracker |
-| `StartSearch` | No | Start searching for target |
-| `StartMeasure` | No | Start precision measurement |
-| `StopMeasure` | No | Stop measurement and return to locked |
-| `Reset` | Yes | Reset the system from error state (blocks during reset) |
-| `ReturnToIdle` | No | Return from tracking to idle state |
+| Command | Sync | Expected State | Description |
+|---------|------|----------------|-------------|
+| `PowerOn` | Yes | `Idle` | Waits until InitComplete event (blocks until system is ready) |
+| `PowerOff` | No | `Off` | Immediate transition to Off |
+| `StartSearch` | Yes | `Locked` | Waits until TargetFound event (blocks until target acquired) |
+| `StartMeasure` | No | `Measuring` | Immediate transition to Measuring |
+| `StopMeasure` | No | `Locked` | Immediate transition to Locked |
+| `Reset` | Yes | `Idle` | Waits until InitComplete event (blocks during reset) |
+| `ReturnToIdle` | No | `Idle` | Immediate transition to Idle |
+
+**Expected State Behavior:** Commands with `expectedState` don't return until that state is reached (or timeout). For example, `StartSearch` returns only after `TargetFound` event transitions the system to `Locked` state. This ensures the caller knows the operation completed successfully.
 
 **Action Commands (don't change state, may be state-restricted):**
 
@@ -807,6 +809,48 @@ sequenceDiagram
     Note over Worker: Eventually processes message<br/>but promise already removed
 ```
 
+### Expected State: Waiting for State Transitions
+
+State-changing commands can specify an `expectedState` that the system should reach before the command returns. This is useful for operations that require external events to complete:
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant ThreadedHSM
+    participant HSM
+    participant Hardware
+
+    Client->>ThreadedHSM: sendMessage(StartSearch)
+    ThreadedHSM->>HSM: processMessage(StartSearch)
+    HSM-->>ThreadedHSM: Transition to Searching
+    Note over ThreadedHSM: expectedState = "Locked"<br/>Current = "Searching"<br/>→ Register expectation
+
+    Note over Client: Blocked waiting...
+
+    Hardware->>ThreadedHSM: sendMessageAsync(TargetFound)
+    ThreadedHSM->>HSM: processMessage(TargetFound)
+    HSM-->>ThreadedHSM: Transition to Locked
+
+    Note over ThreadedHSM: checkStateExpectations()<br/>Locked == expectedState<br/>→ Fulfill promise
+
+    ThreadedHSM-->>Client: Response: success=true, state="Locked"
+    Note over Client: StartSearch returned!
+```
+
+**Commands with Expected State:**
+
+| Command | Immediate State | Expected State | Waits For |
+|---------|-----------------|----------------|-----------|
+| `PowerOn` | Initializing | Idle | `InitComplete` event |
+| `StartSearch` | Searching | Locked | `TargetFound` event |
+| `Reset` | Initializing | Idle | `InitComplete` event |
+| `PowerOff` | Off | Off | (immediate) |
+| `StartMeasure` | Measuring | Measuring | (immediate) |
+| `StopMeasure` | Locked | Locked | (immediate) |
+| `ReturnToIdle` | Idle | Idle | (immediate) |
+
+**Timeout Behavior:** If the expected state is not reached within the message timeout (default 30 seconds), the command returns with `success=false` and an error message.
+
 ### Summary: When to Use Each Pattern
 
 | Pattern | Use When | Example |
@@ -1219,6 +1263,7 @@ StateMachine/
 12. **Self-Executing Commands**: Action commands have an `execute()` method - the command struct contains all logic (validation, execution, result). Dispatcher uses `std::visit` to call it.
 13. **Compile-Time String Constants**: All JSON keys defined in `Keywords.hpp` as `inline constexpr` (position, state, command params, event params, results, message protocol) - no runtime string allocation, single point of definition, type-safe refactoring.
 14. **Unified Sync Flag**: Both state-changing commands and action commands support `sync` flag - when `true`, blocks other messages during execution. State-changing commands use this for critical transitions (PowerOn, Reset).
+15. **Expected State Pattern**: State-changing commands can specify an `expectedState` that must be reached before the command returns. Commands like `StartSearch` wait for `TargetFound` event to reach `Locked` state, ensuring the caller knows the operation completed (or timed out).
 
 ## References
 
@@ -1342,16 +1387,19 @@ namespace Events
 
 ### Pattern 3: State-Changing Command Definition (Imperative)
 
-Commands are instructions - things TO DO. Name them imperatively. State-changing commands now support the `sync` flag to block other messages during critical transitions.
+Commands are instructions - things TO DO. Name them imperatively. State-changing commands support:
+- `sync` flag - blocks other messages during execution
+- `expectedState` - the command waits until this state is reached (or timeout)
 
 ```cpp
 namespace Commands
 {
-    // Non-blocking state change (sync = false)
+    // Command that waits for external event (expectedState != immediate result)
     struct StartSearch
     {
-        static constexpr const char* name = "StartSearch";
-        static constexpr bool sync = false;  // Other messages can be processed
+        static constexpr const char* name          = "StartSearch";
+        static constexpr bool        sync          = true;
+        static constexpr const char* expectedState = "Operational::Tracking::Locked"; // Wait for TargetFound
 
         std::string operator()() const { return name; }
 
@@ -1363,20 +1411,21 @@ namespace Commands
         friend void from_json(const nlohmann::json&, StartSearch&) {}
     };
 
-    // Blocking state change (sync = true) - for critical transitions
-    struct PowerOn
+    // Command with immediate expected state (no waiting needed)
+    struct StartMeasure
     {
-        static constexpr const char* name = "PowerOn";
-        static constexpr bool sync = true;  // Block other messages during power-on
+        static constexpr const char* name          = "StartMeasure";
+        static constexpr bool        sync          = false;
+        static constexpr const char* expectedState = "Operational::Tracking::Measuring"; // Immediate
 
         std::string operator()() const { return name; }
 
-        friend void to_json(nlohmann::json& j, const PowerOn&)
+        friend void to_json(nlohmann::json& j, const StartMeasure&)
         {
             j = nlohmann::json::object();
         }
 
-        friend void from_json(const nlohmann::json&, PowerOn&) {}
+        friend void from_json(const nlohmann::json&, StartMeasure&) {}
     };
 }
 ```
@@ -1607,6 +1656,8 @@ Ensure the code:
 - [ ] All Events are in `namespace Events` with past-tense names
 - [ ] All Commands are in `namespace Commands` with imperative names
 - [ ] All commands (state-changing AND action) have `static constexpr bool sync`
+- [ ] State-changing commands have `static constexpr const char* expectedState`
+- [ ] Commands waiting for events have `expectedState` set to target state (e.g., StartSearch → Locked)
 - [ ] Action commands have `execute()` method for validation and execution logic
 - [ ] All message types have `operator()()` returning name
 - [ ] All message types have `to_json` and `from_json` friend functions
