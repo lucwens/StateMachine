@@ -250,6 +250,432 @@ tracker.stop();
 
 The API is unified - `sendMessage()` and `sendMessageAsync()` work for both Events and Commands. The namespace distinction (`Events::` vs `Commands::`) provides semantic clarity while the processing is uniform.
 
+## Message Processing & Results
+
+This section explains how different message types are processed and how results are returned to the caller.
+
+### Message Categories
+
+Messages fall into three categories based on how they affect state and return results:
+
+```mermaid
+flowchart TB
+    subgraph Input ["All Messages"]
+        MSG[Message Received]
+    end
+
+    MSG --> PARSE{Parse Message Type}
+
+    PARSE -->|"Events<br/>(InitComplete, TargetFound, ...)"| EVT[Event Processing]
+    PARSE -->|"State-Changing Commands<br/>(PowerOn, StartSearch, ...)"| SCC[State Command Processing]
+    PARSE -->|"Action Commands<br/>(Home, GetPosition, ...)"| ACT[Action Command Processing]
+
+    EVT --> HSM1[HSM.processMessage]
+    SCC --> HSM2[HSM.processMessage]
+    ACT --> EXEC[cmd.execute]
+
+    HSM1 --> SC1{State Changed?}
+    HSM2 --> SC2{State Changed?}
+
+    SC1 -->|Yes| TRANS1[Transition + Entry/Exit]
+    SC1 -->|No| DATA1[Update State Data Only]
+    SC2 -->|Yes| TRANS2[Transition + Entry/Exit]
+
+    TRANS1 --> RES1[Result: handled=true, stateChanged=true]
+    DATA1 --> RES2[Result: handled=true, stateChanged=false]
+    TRANS2 --> RES3[Result: handled=true, stateChanged=true]
+
+    EXEC --> RES4[Result: success + command-specific data]
+
+    RES1 --> RESP[Response Message]
+    RES2 --> RESP
+    RES3 --> RESP
+    RES4 --> RESP
+```
+
+### Events: State-Changing vs Data-Only
+
+Not all events trigger state transitions. Some events update internal state data without changing the current state:
+
+| Event | Effect | State Change? |
+|-------|--------|---------------|
+| `InitComplete` | Initializing → Idle | Yes |
+| `InitFailed` | Initializing → Error | Yes |
+| `TargetFound` | Searching → Locked | Yes |
+| `TargetLost` | Locked/Measuring → Searching | Yes |
+| `ErrorOccurred` | Any → Error | Yes |
+| `MeasurementComplete` | Records point, stays in Measuring | **No** |
+
+The `MeasurementComplete` event is an example of a **data event** - it's handled by the HSM but only updates internal data (the measurement count and coordinates) without transitioning to a different state.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant ThreadedHSM
+    participant HSM
+    participant Measuring as Measuring State
+
+    Note over Client,Measuring: Data Event - No State Change
+    Client->>ThreadedHSM: sendMessage(MeasurementComplete{x,y,z})
+    ThreadedHSM->>HSM: processMessage(MeasurementComplete)
+    HSM->>Measuring: handleMessage()
+    Measuring->>Measuring: recordMeasurement(x,y,z)
+    Note over Measuring: measurementCount++<br/>Store coordinates<br/>NO transition
+    Measuring-->>HSM: return true (handled)
+    HSM-->>ThreadedHSM: return true
+    ThreadedHSM-->>Client: {handled: true, stateChanged: false}
+```
+
+### Synchronous vs Asynchronous Message Handling
+
+The HSM supports two modes of sending messages:
+
+#### Asynchronous (Fire-and-Forget)
+
+```cpp
+uint64_t id = tracker.sendMessageAsync(Events::TargetFound{5000.0});
+// Returns immediately, message processed in background
+// No response available
+```
+
+```mermaid
+sequenceDiagram
+    participant Client as Client Thread
+    participant Queue as Message Queue
+    participant Worker as HSM Worker Thread
+    participant HSM
+
+    Client->>Queue: sendMessageAsync(msg)
+    Note over Client: Returns immediately<br/>with message ID
+    Client->>Client: Continue execution
+
+    Queue-->>Worker: Dequeue message
+    Worker->>HSM: processMessage()
+    HSM-->>Worker: Result (discarded)
+    Note over Worker: No response sent<br/>to client
+```
+
+**Use cases:**
+- Notifications that don't need confirmation
+- High-frequency events where latency matters
+- Events where the caller doesn't care about the result
+
+#### Synchronous (Wait for Response)
+
+```cpp
+Message response = tracker.sendMessage(Commands::Home{50.0});
+// Blocks until HSM processes and returns result
+if (response.success) {
+    std::cout << "Position: " << response.params.dump() << "\n";
+}
+```
+
+```mermaid
+sequenceDiagram
+    participant Client as Client Thread
+    participant Queue as Message Queue
+    participant Worker as HSM Worker Thread
+    participant HSM
+
+    Client->>Queue: sendMessage(msg) + Promise
+    Note over Client: Blocks waiting<br/>for response
+
+    Queue-->>Worker: Dequeue message
+    Worker->>HSM: processMessage()
+    HSM-->>Worker: Result
+    Worker->>Client: Fulfill Promise with Response
+
+    Note over Client: Resumes with response
+    Client->>Client: Process response.success,<br/>response.params, response.error
+```
+
+#### How Futures and Promises Work
+
+The synchronous message pattern uses C++ `std::promise` and `std::future` to safely pass results between threads. This is a **one-time, one-way communication channel**:
+
+```mermaid
+flowchart LR
+    subgraph Producer ["Worker Thread (Producer)"]
+        P[std::promise&lt;Message&gt;]
+    end
+
+    subgraph Consumer ["Client Thread (Consumer)"]
+        F[std::future&lt;Message&gt;]
+    end
+
+    P -->|"set_value(response)"| SS[(Shared State)]
+    SS -->|"get() returns value"| F
+
+    style SS fill:#f9f,stroke:#333
+```
+
+**The Promise/Future Contract:**
+
+| Component | Thread | Role |
+|-----------|--------|------|
+| `std::promise<Message>` | Worker | Producer - will provide a value later |
+| `std::future<Message>` | Client | Consumer - will receive the value when ready |
+| Shared State | Internal | Thread-safe storage connecting promise to future |
+
+**Step-by-step flow in ThreadedHSM:**
+
+```cpp
+// 1. Client thread creates promise and extracts future
+Message sendAndWait(Message msg)
+{
+    std::promise<Message> promise;
+    auto future = promise.get_future();  // Connected to promise
+
+    uint64_t id = msg.id;
+
+    // 2. Store promise in map so worker can find it
+    {
+        std::lock_guard<std::mutex> lock(promiseMutex_);
+        pendingPromises_[id] = std::move(promise);
+    }
+
+    // 3. Push message to queue
+    messageQueue_.push(std::move(msg));
+
+    // 4. Block until worker fulfills promise (or timeout)
+    auto status = future.wait_for(std::chrono::milliseconds(timeoutMs));
+
+    if (status == std::future_status::ready)
+    {
+        return future.get();  // Returns the response
+    }
+    else
+    {
+        return Message::createTimeoutResponse(id);
+    }
+}
+```
+
+```cpp
+// Worker thread - after processing message
+void processMessage(PendingMessage pending)
+{
+    // ... process the message ...
+    Message response = processMessageContent(msg);
+
+    // 5. Find and fulfill the promise
+    {
+        std::lock_guard<std::mutex> lock(promiseMutex_);
+        auto it = pendingPromises_.find(msg.id);
+        if (it != pendingPromises_.end())
+        {
+            it->second.set_value(response);  // Unblocks client!
+            pendingPromises_.erase(it);
+        }
+    }
+}
+```
+
+```mermaid
+sequenceDiagram
+    participant Client as Client Thread
+    participant Map as pendingPromises_
+    participant Queue as Message Queue
+    participant Worker as Worker Thread
+
+    Note over Client: Create promise/future pair
+    Client->>Client: promise = std::promise&lt;Message&gt;()
+    Client->>Client: future = promise.get_future()
+
+    Client->>Map: Store promise by message ID
+    Client->>Queue: Push message
+
+    Note over Client: future.wait_for(timeout)
+    Note over Client: Thread BLOCKED
+
+    Queue-->>Worker: Pop message
+    Worker->>Worker: Process message
+    Worker->>Worker: Create response
+
+    Worker->>Map: Find promise by ID
+    Map-->>Worker: promise reference
+    Worker->>Worker: promise.set_value(response)
+
+    Note over Client: future becomes ready
+    Note over Client: Thread UNBLOCKED
+
+    Client->>Client: response = future.get()
+```
+
+**Key Properties of Promise/Future:**
+
+| Property | Behavior |
+|----------|----------|
+| One-shot | Can only set value once; second `set_value()` throws exception |
+| Thread-safe | Safe to call `set_value()` and `get()` from different threads |
+| Blocking | `future.get()` blocks until value is available |
+| Timeout support | `future.wait_for()` returns status without blocking forever |
+| Move-only | Promises and futures cannot be copied, only moved |
+
+**Why use Promise/Future instead of alternatives?**
+
+| Alternative | Problem |
+|-------------|---------|
+| Polling a shared variable | Wastes CPU, requires manual synchronization |
+| Condition variable | More complex setup, easy to get wrong |
+| Callback | Callback runs on worker thread, not client thread |
+| **Promise/Future** | Clean API, automatic synchronization, timeout support |
+
+### The `sync` Flag: Blocking Other Messages
+
+The `sync` flag on action commands has a specific meaning: **the HSM should not process other messages until this command completes**.
+
+This is important for commands that take time to execute (like `Home` or `Compensate`) where interleaving other commands could cause issues.
+
+```mermaid
+sequenceDiagram
+    participant C1 as Client 1
+    participant C2 as Client 2
+    participant Queue as Message Queue
+    participant Buffer as Message Buffer
+    participant Worker as HSM Worker
+
+    C1->>Queue: Home{sync=true}
+    Note over Worker: syncMessageInProgress = true
+
+    C2->>Queue: GetPosition{}
+    Queue-->>Worker: Dequeue GetPosition
+    Worker->>Buffer: Buffer message (sync in progress)
+
+    Worker->>Worker: Execute Home (takes time)
+    Note over Worker: Home completes
+
+    Note over Worker: syncMessageInProgress = false
+    Worker->>Buffer: Process buffered messages
+    Buffer-->>Worker: GetPosition
+    Worker->>Worker: Execute GetPosition
+```
+
+### Result Structure by Message Type
+
+Each message type returns different result data:
+
+#### Events and State-Changing Commands
+
+```json
+{
+  "id": 1,
+  "isResponse": true,
+  "success": true,
+  "result": {
+    "handled": true,
+    "state": "Operational::Tracking::Locked",
+    "stateChanged": true
+  }
+}
+```
+
+#### Action Commands
+
+```json
+{
+  "id": 2,
+  "isResponse": true,
+  "success": true,
+  "result": {
+    "position": {
+      "x": 1234.567,
+      "y": 2345.678,
+      "z": 345.789,
+      "azimuth": 45.123,
+      "elevation": 12.456
+    }
+  }
+}
+```
+
+#### Failed Commands (State Restriction)
+
+```json
+{
+  "id": 3,
+  "isResponse": true,
+  "success": false,
+  "result": {},
+  "error": "Home command only valid in Idle state (current: Operational::Tracking::Locked)"
+}
+```
+
+### Complete Message Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant ThreadedHSM
+    participant Queue as Message Queue
+    participant Worker as Worker Thread
+    participant HSM
+    participant Registry as MessageRegistry
+
+    Client->>ThreadedHSM: sendMessage(Commands::Home{50.0})
+
+    Note over ThreadedHSM: Create Message with:<br/>id, name, params, sync, timeout
+
+    ThreadedHSM->>ThreadedHSM: Create Promise/Future pair
+    ThreadedHSM->>Queue: Push PendingMessage
+
+    Note over Client: Blocks on Future.wait()
+
+    Queue-->>Worker: waitPop() returns message
+
+    Worker->>Registry: fromJsonStateChanging(name, params)
+    Registry-->>Worker: nullopt (not a state message)
+
+    Worker->>Registry: fromJson(name, params)
+    Registry-->>Worker: Commands::Home{50.0}
+
+    Worker->>Worker: std::visit with execute()
+    Note over Worker: Home.execute(currentState)<br/>Validates state<br/>Performs homing<br/>Returns ExecuteResult
+
+    Worker->>Worker: Create Response Message
+    Worker->>ThreadedHSM: Fulfill Promise
+
+    ThreadedHSM-->>Client: Response Message
+    Note over Client: Future.get() returns
+```
+
+### Timeout Handling
+
+Messages can specify a timeout. If the HSM doesn't process the message in time, the caller receives a timeout response:
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant ThreadedHSM
+    participant Queue
+    participant Worker
+
+    Client->>ThreadedHSM: send("Home", {}, sync=true, timeout=1000ms)
+    ThreadedHSM->>Queue: Push message
+
+    Note over Client: Waiting...
+
+    Note over Worker: Busy with<br/>long-running command
+
+    Note over Client: 1000ms elapsed
+
+    Client->>Client: Future.wait_for() timeout
+    ThreadedHSM-->>Client: createTimeoutResponse()
+
+    Note over Client: Receives:<br/>{success: false, error: "Request timed out"}
+
+    Note over Worker: Eventually processes message<br/>but promise already removed
+```
+
+### Summary: When to Use Each Pattern
+
+| Pattern | Use When | Example |
+|---------|----------|---------|
+| `sendMessageAsync()` | Don't need response, fire-and-forget | Sending periodic `MeasurementComplete` events |
+| `sendMessage()` with `sync=false` | Need response but command is fast | `GetPosition`, `GetStatus` |
+| `sendMessage()` with `sync=true` | Need response AND command takes time | `Home`, `Compensate` |
+| Timeout | Protecting against HSM hangs | Any synchronous call in production |
+
 ## C++ Programming Patterns Used
 
 ### 1. Type-Safe State Representation with `std::variant`
@@ -663,3 +1089,370 @@ StateMachine/
 ## License
 
 This is a demonstration project for educational purposes.
+
+---
+
+## LLM Prompt Template for Generating Device-Specific HSM
+
+This section contains a prompt template for generating a ThreadedHSM implementation for a new laser tracker (or similar device) based on its SDK documentation.
+
+### How to Use
+
+1. Copy the prompt template below
+2. Append the SDK documentation for your specific device
+3. Feed to an LLM (Claude, GPT-4, etc.)
+4. Review and integrate the generated code
+
+### Prompt Template
+
+```
+You are a C++ expert specializing in state machine design. Your task is to generate a ThreadedHSM implementation for a specific laser tracker based on its SDK documentation.
+
+## Reference Implementation
+
+Use the following patterns from the reference implementation. This is a TEMPLATE - adapt the states, events, and commands to match the SDK documentation provided at the end.
+
+### Architecture Overview
+
+The HSM consists of these components:
+1. **Keywords.hpp** - Compile-time string constants for all JSON keys
+2. **States** - Hierarchical state definitions using nested std::variant
+3. **Events** - Past-tense notifications (namespace Events::)
+4. **Commands** - Imperative instructions (namespace Commands::)
+5. **HSM class** - Core state machine with message handlers
+6. **ThreadedHSM class** - Thread-safe wrapper with message queue
+
+### Pattern 1: State Definition
+
+States are structs with:
+- Static `name` constant
+- `onEntry()` and `onExit()` methods
+- Optional state-specific data members
+
+```cpp
+struct Idle
+{
+    static constexpr const char* name = "Idle";
+
+    void onEntry() const
+    {
+        std::cout << "  [ENTRY] Idle: Ready for operation\n";
+    }
+
+    void onExit() const
+    {
+        std::cout << "  [EXIT] Idle: Leaving idle state\n";
+    }
+};
+```
+
+Composite states contain a sub-state variant:
+
+```cpp
+struct Tracking
+{
+    static constexpr const char* name = "Tracking";
+    TrackingSubState subState;  // std::variant<Searching, Locked, Measuring>
+
+    void onEntry() const
+    {
+        std::cout << "  [ENTRY] Tracking\n";
+        std::visit([](const auto& s) { s.onEntry(); }, subState);
+    }
+
+    void onExit() const
+    {
+        std::visit([](const auto& s) { s.onExit(); }, subState);
+        std::cout << "  [EXIT] Tracking\n";
+    }
+};
+```
+
+### Pattern 2: Event Definition (Past Tense)
+
+Events represent external occurrences - things that HAPPENED. Name them in past tense.
+
+```cpp
+namespace Events
+{
+    struct TargetFound
+    {
+        static constexpr const char* name = "TargetFound";
+        double distance_mm = 0.0;
+
+        std::string operator()() const
+        {
+            return std::string(name) + " at " + std::to_string(distance_mm) + " mm";
+        }
+
+        friend void to_json(nlohmann::json& j, const TargetFound& e)
+        {
+            j = nlohmann::json{{"distance_mm", e.distance_mm}};
+        }
+
+        friend void from_json(const nlohmann::json& j, TargetFound& e)
+        {
+            if (j.contains("distance_mm"))
+                j.at("distance_mm").get_to(e.distance_mm);
+        }
+    };
+}
+```
+
+### Pattern 3: State-Changing Command Definition (Imperative)
+
+Commands are instructions - things TO DO. Name them imperatively.
+
+```cpp
+namespace Commands
+{
+    struct StartSearch
+    {
+        static constexpr const char* name = "StartSearch";
+
+        std::string operator()() const { return name; }
+
+        friend void to_json(nlohmann::json& j, const StartSearch&)
+        {
+            j = nlohmann::json::object();
+        }
+
+        friend void from_json(const nlohmann::json&, StartSearch&) {}
+    };
+}
+```
+
+### Pattern 4: Action Command Definition (with execute())
+
+Action commands don't change state but perform operations. They have:
+- `static constexpr bool sync` - whether to block other messages during execution
+- `execute()` method with state validation and operation logic
+
+```cpp
+namespace Commands
+{
+    struct GetPosition
+    {
+        static constexpr const char* name = "GetPosition";
+        static constexpr bool sync = false;  // Fast operation, no blocking needed
+
+        std::string operator()() const { return name; }
+
+        friend void to_json(nlohmann::json& j, const GetPosition&)
+        {
+            j = nlohmann::json::object();
+        }
+
+        friend void from_json(const nlohmann::json&, GetPosition&) {}
+
+        ExecuteResult execute(const std::string& currentState) const
+        {
+            // Validate state
+            if (currentState.find("Off") != std::string::npos)
+            {
+                return ExecuteResult::fail("GetPosition not available when powered off");
+            }
+
+            // Perform operation (call SDK here)
+            nlohmann::json result;
+            result["position"]["x"] = 1234.567;
+            result["position"]["y"] = 2345.678;
+            result["position"]["z"] = 345.789;
+
+            return ExecuteResult::ok(result);
+        }
+    };
+}
+```
+
+### Pattern 5: State Message Variant
+
+All events and commands go in a single flat variant:
+
+```cpp
+using StateMessage = std::variant<
+    // Events
+    Events::InitComplete, Events::InitFailed, Events::TargetFound, ...
+    // State-changing Commands
+    Commands::PowerOn, Commands::PowerOff, Commands::StartSearch, ...
+    // Action Commands
+    Commands::Home, Commands::GetPosition, Commands::SetLaserPower, ...
+>;
+```
+
+### Pattern 6: Message Handler
+
+Each state has a handler that uses std::visit with if constexpr:
+
+```cpp
+bool handleMessage(States::Idle& /*state*/, const StateMessage& msg)
+{
+    return std::visit(
+        [this](const auto& m) -> bool
+        {
+            using M = std::decay_t<decltype(m)>;
+
+            if constexpr (std::is_same_v<M, Commands::StartSearch>)
+            {
+                transitionOperationalTo(parent, States::Tracking{});
+                return true;
+            }
+            else if constexpr (std::is_same_v<M, Events::ErrorOccurred>)
+            {
+                transitionOperationalTo(parent, States::Error{m.errorCode, m.description});
+                return true;
+            }
+            else
+            {
+                return false;  // Message not handled in this state
+            }
+        },
+        msg);
+}
+```
+
+### Pattern 7: Keywords.hpp
+
+All JSON keys are compile-time constants:
+
+```cpp
+#pragma once
+
+namespace Keys
+{
+    // Message protocol
+    inline constexpr const char* Id = "id";
+    inline constexpr const char* Name = "name";
+    inline constexpr const char* Params = "params";
+    inline constexpr const char* Success = "success";
+    inline constexpr const char* Error = "error";
+
+    // State-specific keys
+    inline constexpr const char* State = "state";
+    inline constexpr const char* Position = "position";
+    inline constexpr const char* X = "x";
+    inline constexpr const char* Y = "y";
+    inline constexpr const char* Z = "z";
+
+    // Add all keys used in your Events and Commands
+}
+```
+
+### Pattern 8: Code Formatting (CRITICAL)
+
+Use Microsoft/Allman brace style - opening braces on their own line:
+
+```cpp
+// CORRECT
+struct Example
+{
+    void doSomething()
+    {
+        if (condition)
+        {
+            // code
+        }
+    }
+};
+
+// WRONG - Do NOT use K&R style
+struct Example {
+    void doSomething() {
+        if (condition) {
+        }
+    }
+};
+```
+
+## Your Task
+
+Analyze the SDK documentation provided below and generate:
+
+1. **State Hierarchy Diagram** (Mermaid) showing all states and transitions
+2. **Events List** - All events extracted from SDK (past tense naming)
+3. **Commands List** - All commands extracted from SDK:
+   - State-changing commands (change HSM state)
+   - Action commands (don't change state, have execute() method)
+4. **State Transition Table** - Current State → Message → Next State
+5. **Keywords.hpp** - All JSON keys needed
+6. **Complete ThreadedHSM.hpp** implementation
+
+## Classification Guidelines
+
+When analyzing the SDK, classify operations as follows:
+
+| SDK Operation Type | HSM Classification | Example |
+|--------------------|-------------------|---------|
+| Async callback/notification | Event (past tense) | "Target acquired" → TargetFound |
+| Status change notification | Event (past tense) | "Init complete" → InitComplete |
+| User-initiated mode change | State-changing Command | "Start tracking" → StartSearch |
+| Power/lifecycle control | State-changing Command | "Power on" → PowerOn |
+| Query/getter operation | Action Command (sync=false) | "Get position" → GetPosition |
+| Configuration setter | Action Command (sync=false) | "Set laser power" → SetLaserPower |
+| Long-running operation | Action Command (sync=true) | "Home axes" → Home |
+| Calibration/compensation | Action Command (sync=true) | "Run compensation" → Compensate |
+
+## Events vs Commands Decision Tree
+
+```
+Is it something that HAPPENED (external notification)?
+├─ YES → Event (past tense: TargetFound, InitComplete, ErrorOccurred)
+└─ NO → Is it something TO DO (instruction)?
+    └─ YES → Does it change the HSM state?
+        ├─ YES → State-changing Command (PowerOn, StartSearch, Reset)
+        └─ NO → Action Command with execute()
+            └─ Does it take significant time (>100ms)?
+                ├─ YES → sync = true (Home, Compensate)
+                └─ NO → sync = false (GetPosition, GetStatus)
+```
+
+## SDK Documentation
+
+[PASTE SDK DOCUMENTATION HERE]
+
+---
+
+Based on the SDK documentation above, generate the complete ThreadedHSM implementation following all patterns described. Include:
+
+1. Full state hierarchy with proper nesting
+2. All events with parameters and JSON serialization
+3. All commands (state-changing and action) with proper classification
+4. Complete message handlers for all states
+5. Keywords.hpp with all JSON keys
+6. State transition table in the file comments
+
+Ensure the code:
+- Compiles with C++17
+- Uses Microsoft/Allman brace style
+- Follows all patterns exactly as shown
+- Includes proper entry/exit actions for all states
+- Has complete to_json/from_json for all message types
+- Validates state restrictions in action command execute() methods
+```
+
+### Example SDK Snippets and Their Classification
+
+| SDK Documentation Says | Classification | Generated Code |
+|------------------------|----------------|----------------|
+| "OnTargetAcquired callback fires when..." | Event | `Events::TargetAcquired` |
+| "Call StartMeasurement() to begin..." | State-changing Command | `Commands::StartMeasurement` |
+| "GetCurrentPosition() returns XYZ coordinates" | Action Command (sync=false) | `Commands::GetPosition` with `execute()` |
+| "HomeAxes() moves to home, takes ~2 seconds" | Action Command (sync=true) | `Commands::Home` with `execute()` |
+| "System enters Fault state on error" | State + Event | `States::Fault` + `Events::FaultOccurred` |
+
+### Checklist for Generated Code
+
+- [ ] All states have `static constexpr const char* name`
+- [ ] All states have `onEntry()` and `onExit()` methods
+- [ ] Composite states have sub-state variant and proper entry/exit ordering
+- [ ] All Events are in `namespace Events` with past-tense names
+- [ ] All Commands are in `namespace Commands` with imperative names
+- [ ] Action commands have `static constexpr bool sync` and `execute()` method
+- [ ] All message types have `operator()()` returning name
+- [ ] All message types have `to_json` and `from_json` friend functions
+- [ ] StateMessage variant includes ALL events and commands
+- [ ] StateMessageRegistry includes ALL types
+- [ ] Keywords.hpp has ALL JSON keys used anywhere
+- [ ] Message handlers cover ALL valid transitions
+- [ ] Code uses Allman/Microsoft brace style
+- [ ] State restrictions validated in action command `execute()` methods

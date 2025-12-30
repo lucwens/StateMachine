@@ -147,7 +147,7 @@ namespace LaserTracker
             }
         };
 
-        /** @brief Target retroreflector was found */
+        /** @brief Target retro reflector was found */
         struct TargetFound
         {
             static constexpr const char* name = "TargetFound";

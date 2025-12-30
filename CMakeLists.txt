@@ -12,11 +12,22 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Enable warnings
 if(MSVC)
-    # Remove default /W3 to avoid D9025 warning when adding /W4
+    # Remove default /W3 and /WX to avoid D9025 override warnings
     string(REGEX REPLACE "/W[0-4]" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-    add_compile_options(/W4 /WX-)
+    string(REGEX REPLACE "/WX-?" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    add_compile_options(/W4)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
+endif()
+
+# Ensure debug builds have no optimizations for proper debugging
+if(MSVC)
+    # /Od = disable optimizations, /Zi = full debug info, /RTC1 = runtime checks
+    # /MDd = debug dynamic runtime library (required for debug CRT symbols)
+    set(CMAKE_CXX_FLAGS_DEBUG "/MDd /Od /Zi /RTC1 /DDEBUG /D_DEBUG")
+else()
+    # -O0 = no optimization, -g = debug symbols, -fno-omit-frame-pointer = better stack traces
+    set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g -fno-omit-frame-pointer -DDEBUG")
 endif()
 
 # Find threading library
