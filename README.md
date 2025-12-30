@@ -38,15 +38,15 @@ Events represent external occurrences. The FSM doesn't control these; it simply 
 Commands are instructions sent to the FSM to drive specific outcomes.
 
 **State-Changing Commands:**
-| Command | Description |
-|---------|-------------|
-| `PowerOn` | Turn on the laser tracker |
-| `PowerOff` | Turn off the laser tracker |
-| `StartSearch` | Start searching for target |
-| `StartMeasure` | Start precision measurement |
-| `StopMeasure` | Stop measurement and return to locked |
-| `Reset` | Reset the system from error state |
-| `ReturnToIdle` | Return from tracking to idle state |
+| Command | Sync | Description |
+|---------|------|-------------|
+| `PowerOn` | Yes | Turn on the laser tracker (blocks other messages during power-on) |
+| `PowerOff` | No | Turn off the laser tracker |
+| `StartSearch` | No | Start searching for target |
+| `StartMeasure` | No | Start precision measurement |
+| `StopMeasure` | No | Stop measurement and return to locked |
+| `Reset` | Yes | Reset the system from error state (blocks during reset) |
+| `ReturnToIdle` | No | Return from tracking to idle state |
 
 **Action Commands (don't change state, may be state-restricted):**
 | Command | Valid States | Sync | Description |
@@ -1074,10 +1074,11 @@ StateMachine/
 7. **Flat Variant Design**: Single `StateMessage` variant contains all types directly - no nested variants, no if/else dispatch
 8. **Uniform API**: `sendMessage()` works for both Events and Commands - namespace distinction provides semantics, processing is uniform
 9. **Industry-Standard JSON**: Uses nlohmann/json for robust JSON parsing and serialization
-10. **Type Registry Pattern**: Single `MessageRegistry` template eliminates manual if-else chains for JSON↔variant conversion using fold expressions; action commands filtered via `has_sync` trait
+10. **Type Registry Pattern**: Single `MessageRegistry` template eliminates manual if-else chains for JSON↔variant conversion using fold expressions; action commands filtered via `has_execute` trait (detecting `execute()` method)
 11. **ADL Serialization**: Each message type has `to_json`/`from_json` friend functions for automatic nlohmann/json integration
 12. **Self-Executing Commands**: Action commands have an `execute()` method - the command struct contains all logic (validation, execution, result). Dispatcher uses `std::visit` to call it.
 13. **Compile-Time String Constants**: All JSON keys defined in `Keywords.hpp` as `inline constexpr` (position, state, command params, event params, results, message protocol) - no runtime string allocation, single point of definition, type-safe refactoring.
+14. **Unified Sync Flag**: Both state-changing commands and action commands support `sync` flag - when `true`, blocks other messages during execution. State-changing commands use this for critical transitions (PowerOn, Reset).
 
 ## References
 
@@ -1201,14 +1202,16 @@ namespace Events
 
 ### Pattern 3: State-Changing Command Definition (Imperative)
 
-Commands are instructions - things TO DO. Name them imperatively.
+Commands are instructions - things TO DO. Name them imperatively. State-changing commands now support the `sync` flag to block other messages during critical transitions.
 
 ```cpp
 namespace Commands
 {
+    // Non-blocking state change (sync = false)
     struct StartSearch
     {
         static constexpr const char* name = "StartSearch";
+        static constexpr bool sync = false;  // Other messages can be processed
 
         std::string operator()() const { return name; }
 
@@ -1218,6 +1221,22 @@ namespace Commands
         }
 
         friend void from_json(const nlohmann::json&, StartSearch&) {}
+    };
+
+    // Blocking state change (sync = true) - for critical transitions
+    struct PowerOn
+    {
+        static constexpr const char* name = "PowerOn";
+        static constexpr bool sync = true;  // Block other messages during power-on
+
+        std::string operator()() const { return name; }
+
+        friend void to_json(nlohmann::json& j, const PowerOn&)
+        {
+            j = nlohmann::json::object();
+        }
+
+        friend void from_json(const nlohmann::json&, PowerOn&) {}
     };
 }
 ```
@@ -1447,7 +1466,8 @@ Ensure the code:
 - [ ] Composite states have sub-state variant and proper entry/exit ordering
 - [ ] All Events are in `namespace Events` with past-tense names
 - [ ] All Commands are in `namespace Commands` with imperative names
-- [ ] Action commands have `static constexpr bool sync` and `execute()` method
+- [ ] All commands (state-changing AND action) have `static constexpr bool sync`
+- [ ] Action commands have `execute()` method for validation and execution logic
 - [ ] All message types have `operator()()` returning name
 - [ ] All message types have `to_json` and `from_json` friend functions
 - [ ] StateMessage variant includes ALL events and commands
@@ -1456,3 +1476,4 @@ Ensure the code:
 - [ ] Message handlers cover ALL valid transitions
 - [ ] Code uses Allman/Microsoft brace style
 - [ ] State restrictions validated in action command `execute()` methods
+- [ ] Critical transitions (PowerOn, Reset) have `sync = true`

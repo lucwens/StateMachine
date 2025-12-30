@@ -230,70 +230,77 @@ namespace LaserTracker
         // State-Changing Commands
         // --------------------------------------------------------------------
 
-        /** @brief Turn on the laser tracker power */
+        /** @brief Turn on the laser tracker power. Sync: Yes (blocks until transition complete) */
         struct PowerOn
         {
             static constexpr const char* name = "PowerOn";
+            static constexpr bool        sync = true; // Block other messages during power-on sequence
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const PowerOn&) { j = nlohmann::json::object(); }
             friend void from_json(const nlohmann::json&, PowerOn&) {}
         };
 
-        /** @brief Turn off the laser tracker power */
+        /** @brief Turn off the laser tracker power. Sync: No */
         struct PowerOff
         {
             static constexpr const char* name = "PowerOff";
+            static constexpr bool        sync = false;
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const PowerOff&) { j = nlohmann::json::object(); }
             friend void from_json(const nlohmann::json&, PowerOff&) {}
         };
 
-        /** @brief Start searching for target */
+        /** @brief Start searching for target. Sync: No */
         struct StartSearch
         {
             static constexpr const char* name = "StartSearch";
+            static constexpr bool        sync = false;
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const StartSearch&) { j = nlohmann::json::object(); }
             friend void from_json(const nlohmann::json&, StartSearch&) {}
         };
 
-        /** @brief Start precision measurement */
+        /** @brief Start precision measurement. Sync: No */
         struct StartMeasure
         {
             static constexpr const char* name = "StartMeasure";
+            static constexpr bool        sync = false;
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const StartMeasure&) { j = nlohmann::json::object(); }
             friend void from_json(const nlohmann::json&, StartMeasure&) {}
         };
 
-        /** @brief Stop measurement and return to locked */
+        /** @brief Stop measurement and return to locked. Sync: No */
         struct StopMeasure
         {
             static constexpr const char* name = "StopMeasure";
+            static constexpr bool        sync = false;
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const StopMeasure&) { j = nlohmann::json::object(); }
             friend void from_json(const nlohmann::json&, StopMeasure&) {}
         };
 
-        /** @brief Reset the system from error state */
+        /** @brief Reset the system from error state. Sync: Yes (blocks until reset complete) */
         struct Reset
         {
             static constexpr const char* name = "Reset";
+            static constexpr bool        sync = true; // Block other messages during reset sequence
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const Reset&) { j = nlohmann::json::object(); }
             friend void from_json(const nlohmann::json&, Reset&) {}
         };
 
-        /** @brief Return from tracking to idle state */
+        /** @brief Return from tracking to idle state. Sync: No */
         struct ReturnToIdle
         {
             static constexpr const char* name = "ReturnToIdle";
+            static constexpr bool        sync = false;
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const ReturnToIdle&) { j = nlohmann::json::object(); }
@@ -614,7 +621,7 @@ namespace LaserTracker
                 msg);
         }
 
-        // C++17-compatible detection of static sync member (public for use in processActionCommand)
+        // C++17-compatible detection of static sync member (public for use in dispatch)
         template <typename T, typename = void>
         struct has_sync : std::false_type
         {
@@ -622,6 +629,17 @@ namespace LaserTracker
 
         template <typename T>
         struct has_sync<T, std::void_t<decltype(T::sync)>> : std::true_type
+        {
+        };
+
+        // C++17-compatible detection of execute() method (distinguishes action commands from state-changing commands)
+        template <typename T, typename = void>
+        struct has_execute : std::false_type
+        {
+        };
+
+        template <typename T>
+        struct has_execute<T, std::void_t<decltype(std::declval<T>().execute(std::declval<std::string>()))>> : std::true_type
         {
         };
 
@@ -661,13 +679,13 @@ namespace LaserTracker
 
         /**
          * @brief Try to parse JSON into a specific type, excluding action commands
-         * Action commands have a static `sync` member; Events and state-changing Commands don't
+         * Action commands have an execute() method; Events and state-changing Commands don't
          */
         template <typename T>
         static bool tryParseTypeExcludeActions(const std::string& name, const nlohmann::json& params, std::optional<Variant>& out)
         {
-            // Skip action commands (they have a sync member)
-            if constexpr (has_sync<T>::value)
+            // Skip action commands (they have an execute() method)
+            if constexpr (has_execute<T>::value)
             {
                 return false; // Continue to next type
             }
@@ -1870,7 +1888,7 @@ namespace LaserTracker
                 [&](const auto& cmd) -> Message
                 {
                     using T = std::decay_t<decltype(cmd)>;
-                    if constexpr (StateMessageRegistry::template has_sync<T>::value)
+                    if constexpr (StateMessageRegistry::template has_execute<T>::value)
                     {
                         // It's an action command - call its execute() method
                         ExecuteResult result = cmd.execute(currentState);
