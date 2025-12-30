@@ -38,6 +38,7 @@ Events represent external occurrences. The FSM doesn't control these; it simply 
 Commands are instructions sent to the FSM to drive specific outcomes.
 
 **State-Changing Commands:**
+
 | Command | Sync | Description |
 |---------|------|-------------|
 | `PowerOn` | Yes | Turn on the laser tracker (blocks other messages during power-on) |
@@ -49,6 +50,7 @@ Commands are instructions sent to the FSM to drive specific outcomes.
 | `ReturnToIdle` | No | Return from tracking to idle state |
 
 **Action Commands (don't change state, may be state-restricted):**
+
 | Command | Valid States | Sync | Description |
 |---------|--------------|------|-------------|
 | `Home` | Idle | Yes | Move to home position |
