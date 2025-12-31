@@ -1523,15 +1523,18 @@ namespace Commands
 ### Pattern 4: Action Command Definition (with execute())
 
 Action commands don't change state but perform operations. They have:
+- `static constexpr const char* name = CommandNames::XXX` - use Keywords.hpp constant
 - `static constexpr bool sync` - whether to block other messages during execution
-- `execute()` method with state validation and operation logic
+- `execute(const State&)` method with **type-safe** state validation using `isInState<>()`
+
+**CRITICAL**: Use `isInState<States::XXX>()` for state validation, NOT string comparison.
 
 ```cpp
 namespace Commands
 {
     struct GetPosition
     {
-        static constexpr const char* name = "GetPosition";
+        static constexpr const char* name = CommandNames::GetPosition;  // Use Keywords.hpp!
         static constexpr bool sync = false;  // Fast operation, no blocking needed
 
         std::string operator()() const { return name; }
@@ -1543,21 +1546,57 @@ namespace Commands
 
         friend void from_json(const nlohmann::json&, GetPosition&) {}
 
-        ExecuteResult execute(const std::string& currentState) const
+        // Type-safe state checking with isInState<>()
+        ExecuteResult execute(const State& currentState) const
         {
-            // Validate state
-            if (currentState.find("Off") != std::string::npos)
+            // Use isInState<>() for type-safe validation
+            if (isInState<States::Off>(currentState))
             {
                 return ExecuteResult::fail("GetPosition not available when powered off");
             }
 
             // Perform operation (call SDK here)
             nlohmann::json result;
-            result["position"]["x"] = 1234.567;
-            result["position"]["y"] = 2345.678;
-            result["position"]["z"] = 345.789;
+            result[Keys::Position][Keys::X] = 1234.567;  // Use Keywords.hpp!
+            result[Keys::Position][Keys::Y] = 2345.678;
+            result[Keys::Position][Keys::Z] = 345.789;
 
             return ExecuteResult::ok(result);
+        }
+    };
+
+    // Example with multiple valid states
+    struct Home
+    {
+        static constexpr const char* name = CommandNames::Home;
+        static constexpr bool sync = true;  // Long operation, blocks queue
+
+        ExecuteResult execute(const State& currentState) const
+        {
+            // Only valid in Idle state
+            if (!isInState<States::Idle>(currentState))
+            {
+                return ExecuteResult::fail("Home only valid in Idle state");
+            }
+            // ... perform homing
+            return ExecuteResult::ok();
+        }
+    };
+
+    struct Compensate
+    {
+        static constexpr const char* name = CommandNames::Compensate;
+        static constexpr bool sync = true;
+
+        ExecuteResult execute(const State& currentState) const
+        {
+            // Valid in multiple states
+            if (!isInState<States::Idle>(currentState) && !isInState<States::Locked>(currentState))
+            {
+                return ExecuteResult::fail("Compensate only valid in Idle or Locked state");
+            }
+            // ... perform compensation
+            return ExecuteResult::ok();
         }
     };
 }
@@ -1704,10 +1743,13 @@ struct PowerOn
     static constexpr const char* expectedState = StateNames::Operational_Idle;  // NOT "Operational::Idle"
 };
 
-// State validation in execute() uses StateNames
-if (currentState.find(StateNames::Idle) == std::string::npos)  // NOT "Idle"
+// State validation in execute() uses isInState<>() - NOT string comparison!
+ExecuteResult execute(const State& currentState) const  // Takes State, not string!
 {
-    return ExecuteResult::fail("Not in Idle state");
+    if (!isInState<States::Idle>(currentState))  // Type-safe!
+    {
+        return ExecuteResult::fail("Not in Idle state");
+    }
 }
 
 // JSON serialization uses Keys
@@ -1847,8 +1889,8 @@ Ensure the code:
 - [ ] All commands (state-changing AND action) have `static constexpr bool sync`
 - [ ] State-changing commands have `static constexpr const char* expectedState = StateNames::XXX`
 - [ ] Commands waiting for events have `expectedState` set to target state (e.g., StartSearch → Locked)
-- [ ] Action commands have `execute()` method for validation and execution logic
-- [ ] State validation in `execute()` uses `StateNames::XXX` (not naked strings)
+- [ ] Action commands have `execute(const State&)` method (NOT `const std::string&`)
+- [ ] State validation in `execute()` uses `isInState<States::XXX>()` (NOT string find)
 - [ ] All commands have `operator()()` returning name
 - [ ] All commands have `to_json` and `from_json` friend functions
 

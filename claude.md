@@ -104,6 +104,56 @@ result["position"]["x"] = 123.0;  // BAD!
 - **Refactoring support**: IDE can find all usages of a constant
 - **Inventory**: Keywords.hpp serves as a complete list of all identifiers in the system
 
+## Type-Safe State Checking in execute() Methods
+
+**CRITICAL RULE**: Action command `execute()` methods MUST use `isInState<States::XXX>()` for state validation, NOT string comparison.
+
+### Correct Usage
+
+```cpp
+ExecuteResult execute(const State& currentState) const
+{
+    // Type-safe state checking
+    if (!isInState<States::Idle>(currentState))
+    {
+        return ExecuteResult::fail("Home command only valid in Idle state");
+    }
+    // ... execute command
+}
+
+// Checking multiple valid states
+if (!isInState<States::Idle>(currentState) && !isInState<States::Locked>(currentState))
+{
+    return ExecuteResult::fail("Only valid in Idle or Locked state");
+}
+
+// Checking for invalid states
+if (isInState<States::Off>(currentState) || isInState<States::Error>(currentState))
+{
+    return ExecuteResult::fail("Not available in current state");
+}
+```
+
+### Incorrect Usage (DO NOT DO THIS)
+
+```cpp
+// WRONG - string comparison
+ExecuteResult execute(const std::string& currentState) const  // BAD signature!
+{
+    if (currentState.find("Idle") == std::string::npos)  // BAD!
+    {
+        return ExecuteResult::fail("Not in Idle state");
+    }
+}
+```
+
+### Why This Matters
+
+- **Type safety**: `isInState<States::Typo>()` won't compile; `find("Typo")` silently fails
+- **Compile-time validation**: State type errors caught at compile time
+- **Hierarchical support**: `isInState<>()` recursively checks nested states (e.g., finds `Idle` inside `Operational`)
+- **Refactoring**: Rename a state struct, compiler finds all usages
+
 ## Markdown Formatting Rules
 
 When writing or editing markdown files (README.md, etc.):

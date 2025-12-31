@@ -221,539 +221,6 @@ namespace LaserTracker
     } // namespace Events
 
     // ============================================================================
-    // Commands - Imperative instructions (what to do)
-    // ============================================================================
-
-    namespace Commands
-    {
-        // --------------------------------------------------------------------
-        // State-Changing Commands
-        // --------------------------------------------------------------------
-
-        /** @brief Turn on the laser tracker power. Waits for Idle state (after InitComplete) */
-        struct PowerOn
-        {
-            static constexpr const char* name          = CommandNames::PowerOn;
-            static constexpr bool        sync          = true;
-            static constexpr const char* expectedState = StateNames::Operational_Idle; // Wait for InitComplete event
-            std::string                  operator()() const { return name; }
-
-            friend void to_json(nlohmann::json& j, const PowerOn&) { j = nlohmann::json::object(); }
-            friend void from_json(const nlohmann::json&, PowerOn&) {}
-        };
-
-        /** @brief Turn off the laser tracker power. Immediate transition to Off */
-        struct PowerOff
-        {
-            static constexpr const char* name          = CommandNames::PowerOff;
-            static constexpr bool        sync          = false;
-            static constexpr const char* expectedState = StateNames::Off; // Immediate
-            std::string                  operator()() const { return name; }
-
-            friend void to_json(nlohmann::json& j, const PowerOff&) { j = nlohmann::json::object(); }
-            friend void from_json(const nlohmann::json&, PowerOff&) {}
-        };
-
-        /** @brief Start searching for target. Waits for Locked state (after TargetFound) */
-        struct StartSearch
-        {
-            static constexpr const char* name          = CommandNames::StartSearch;
-            static constexpr bool        sync          = true;
-            static constexpr const char* expectedState = StateNames::Operational_Tracking_Locked; // Wait for TargetFound event
-            std::string                  operator()() const { return name; }
-
-            friend void to_json(nlohmann::json& j, const StartSearch&) { j = nlohmann::json::object(); }
-            friend void from_json(const nlohmann::json&, StartSearch&) {}
-        };
-
-        /** @brief Start precision measurement. Immediate transition to Measuring */
-        struct StartMeasure
-        {
-            static constexpr const char* name          = CommandNames::StartMeasure;
-            static constexpr bool        sync          = false;
-            static constexpr const char* expectedState = StateNames::Operational_Tracking_Measuring; // Immediate
-            std::string                  operator()() const { return name; }
-
-            friend void to_json(nlohmann::json& j, const StartMeasure&) { j = nlohmann::json::object(); }
-            friend void from_json(const nlohmann::json&, StartMeasure&) {}
-        };
-
-        /** @brief Stop measurement and return to locked. Immediate transition to Locked */
-        struct StopMeasure
-        {
-            static constexpr const char* name          = CommandNames::StopMeasure;
-            static constexpr bool        sync          = false;
-            static constexpr const char* expectedState = StateNames::Operational_Tracking_Locked; // Immediate
-            std::string                  operator()() const { return name; }
-
-            friend void to_json(nlohmann::json& j, const StopMeasure&) { j = nlohmann::json::object(); }
-            friend void from_json(const nlohmann::json&, StopMeasure&) {}
-        };
-
-        /** @brief Reset the system from error state. Waits for Idle state (after InitComplete) */
-        struct Reset
-        {
-            static constexpr const char* name          = CommandNames::Reset;
-            static constexpr bool        sync          = true;
-            static constexpr const char* expectedState = StateNames::Operational_Idle; // Wait for InitComplete event
-            std::string                  operator()() const { return name; }
-
-            friend void to_json(nlohmann::json& j, const Reset&) { j = nlohmann::json::object(); }
-            friend void from_json(const nlohmann::json&, Reset&) {}
-        };
-
-        /** @brief Return from tracking to idle state. Immediate transition to Idle */
-        struct ReturnToIdle
-        {
-            static constexpr const char* name          = CommandNames::ReturnToIdle;
-            static constexpr bool        sync          = false;
-            static constexpr const char* expectedState = StateNames::Operational_Idle; // Immediate
-            std::string                  operator()() const { return name; }
-
-            friend void to_json(nlohmann::json& j, const ReturnToIdle&) { j = nlohmann::json::object(); }
-            friend void from_json(const nlohmann::json&, ReturnToIdle&) {}
-        };
-
-        // --------------------------------------------------------------------
-        // Action Commands (don't change state, may be state-restricted)
-        // --------------------------------------------------------------------
-
-        /** @brief Home - moves to home position. Valid in: Idle. Sync: Yes */
-        struct Home
-        {
-            static constexpr const char* name = CommandNames::Home;
-            static constexpr bool        sync = true;
-            double                       speed = 100.0;
-            std::string                  operator()() const { return name; }
-
-            friend void to_json(nlohmann::json& j, const Home& c) { j = nlohmann::json{{Keys::Speed, c.speed}}; }
-            friend void from_json(const nlohmann::json& j, Home& c)
-            {
-                if (j.contains(Keys::Speed))
-                    j.at(Keys::Speed).get_to(c.speed);
-            }
-
-            ExecuteResult execute(const std::string& currentState) const
-            {
-                if (currentState.find(StateNames::Idle) == std::string::npos)
-                {
-                    return ExecuteResult::fail("Home command only valid in Idle state (current: " + currentState + ")");
-                }
-
-                std::cout << "  [COMMAND] Home: Moving to home position at " << speed << "% speed\n";
-                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(5000 / (speed / 100.0))));
-                std::cout << "  [COMMAND] Home: Homing complete\n";
-
-                nlohmann::json result;
-                result[Keys::Position][Keys::Azimuth]   = 0.0;
-                result[Keys::Position][Keys::Elevation] = 0.0;
-                return ExecuteResult::ok(result);
-            }
-        };
-
-        /** @brief GetPosition - retrieves current position. Valid in: Idle, Locked, Measuring. Sync: No */
-        struct GetPosition
-        {
-            static constexpr const char* name = CommandNames::GetPosition;
-            static constexpr bool        sync = false;
-            std::string                  operator()() const { return name; }
-
-            friend void to_json(nlohmann::json& j, const GetPosition&) { j = nlohmann::json::object(); }
-            friend void from_json(const nlohmann::json&, GetPosition&) {}
-
-            ExecuteResult execute(const std::string& currentState) const
-            {
-                if (currentState.find(StateNames::Off) != std::string::npos ||
-                    currentState.find(StateNames::Initializing) != std::string::npos ||
-                    currentState.find(StateNames::Error) != std::string::npos)
-                {
-                    return ExecuteResult::fail("GetPosition not available in " + currentState);
-                }
-
-                nlohmann::json result;
-                result[Keys::Position][Keys::X]         = 1234.567;
-                result[Keys::Position][Keys::Y]         = 2345.678;
-                result[Keys::Position][Keys::Z]         = 345.789;
-                result[Keys::Position][Keys::Azimuth]   = 45.123;
-                result[Keys::Position][Keys::Elevation] = 12.456;
-
-                std::cout << "  [COMMAND] GetPosition: Returned current position\n";
-                return ExecuteResult::ok(result);
-            }
-        };
-
-        /** @brief SetLaserPower - adjusts laser power. Valid in: Any Operational. Sync: No */
-        struct SetLaserPower
-        {
-            static constexpr const char* name = CommandNames::SetLaserPower;
-            static constexpr bool        sync = false;
-            double                       powerLevel = 1.0;
-            std::string                  operator()() const { return name; }
-
-            friend void to_json(nlohmann::json& j, const SetLaserPower& c) { j = nlohmann::json{{Keys::PowerLevel, c.powerLevel}}; }
-            friend void from_json(const nlohmann::json& j, SetLaserPower& c)
-            {
-                if (j.contains(Keys::PowerLevel))
-                    j.at(Keys::PowerLevel).get_to(c.powerLevel);
-            }
-
-            ExecuteResult execute(const std::string& currentState) const
-            {
-                if (currentState.find(StateNames::Off) != std::string::npos)
-                {
-                    return ExecuteResult::fail("SetLaserPower not available when powered off");
-                }
-
-                if (powerLevel < 0.0 || powerLevel > 1.0)
-                {
-                    return ExecuteResult::fail("Power level must be between 0.0 and 1.0");
-                }
-
-                std::cout << "  [COMMAND] SetLaserPower: Set to " << (powerLevel * 100) << "%\n";
-
-                nlohmann::json result;
-                result[Keys::PowerLevel] = powerLevel;
-                return ExecuteResult::ok(result);
-            }
-        };
-
-        /** @brief Compensate - applies environmental compensation. Valid in: Idle, Locked. Sync: Yes */
-        struct Compensate
-        {
-            static constexpr const char* name = CommandNames::Compensate;
-            static constexpr bool        sync = true;
-            double                       temperature = 20.0;
-            double                       pressure    = 1013.25;
-            double                       humidity    = 50.0;
-            std::string                  operator()() const { return name; }
-
-            friend void to_json(nlohmann::json& j, const Compensate& c)
-            {
-                j = nlohmann::json{{Keys::Temperature, c.temperature}, {Keys::Pressure, c.pressure}, {Keys::Humidity, c.humidity}};
-            }
-            friend void from_json(const nlohmann::json& j, Compensate& c)
-            {
-                if (j.contains(Keys::Temperature))
-                    j.at(Keys::Temperature).get_to(c.temperature);
-                if (j.contains(Keys::Pressure))
-                    j.at(Keys::Pressure).get_to(c.pressure);
-                if (j.contains(Keys::Humidity))
-                    j.at(Keys::Humidity).get_to(c.humidity);
-            }
-
-            ExecuteResult execute(const std::string& currentState) const
-            {
-                if (currentState.find(StateNames::Idle) == std::string::npos &&
-                    currentState.find(StateNames::Locked) == std::string::npos)
-                {
-                    return ExecuteResult::fail("Compensate only valid in Idle or Locked state");
-                }
-
-                std::cout << "  [COMMAND] Compensate: Applying environmental compensation\n";
-                std::cout << "            T=" << temperature << "C, P=" << pressure << "hPa, H=" << humidity << "%\n";
-
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-                double factor = 1.0 + ((temperature - 20.0) * 0.000001) + ((pressure - 1013.25) * 0.0000001);
-                std::cout << "  [COMMAND] Compensate: Factor = " << std::fixed << std::setprecision(8) << factor << "\n";
-
-                nlohmann::json result;
-                result[Keys::CompensationFactor] = factor;
-                result[Keys::Applied]            = true;
-                return ExecuteResult::ok(result);
-            }
-        };
-
-        /** @brief GetStatus - retrieves system status. Valid in: Any. Sync: No */
-        struct GetStatus
-        {
-            static constexpr const char* name = CommandNames::GetStatus;
-            static constexpr bool        sync = false;
-            std::string                  operator()() const { return name; }
-
-            friend void to_json(nlohmann::json& j, const GetStatus&) { j = nlohmann::json::object(); }
-            friend void from_json(const nlohmann::json&, GetStatus&) {}
-
-            ExecuteResult execute(const std::string& currentState) const
-            {
-                nlohmann::json result;
-                result[Keys::State]   = currentState;
-                result[Keys::Healthy] = (currentState.find(StateNames::Error) == std::string::npos);
-                result[Keys::Powered] = (currentState.find(StateNames::Off) == std::string::npos);
-
-                std::cout << "  [COMMAND] GetStatus: State=" << currentState << "\n";
-                return ExecuteResult::ok(result);
-            }
-        };
-
-        /** @brief MoveRelative - moves tracker by relative amount. Valid in: Idle, Locked. Sync: Yes */
-        struct MoveRelative
-        {
-            static constexpr const char* name = CommandNames::MoveRelative;
-            static constexpr bool        sync = true;
-            double                       azimuth   = 0.0;
-            double                       elevation = 0.0;
-            std::string                  operator()() const { return name; }
-
-            friend void to_json(nlohmann::json& j, const MoveRelative& c) { j = nlohmann::json{{Keys::Azimuth, c.azimuth}, {Keys::Elevation, c.elevation}}; }
-            friend void from_json(const nlohmann::json& j, MoveRelative& c)
-            {
-                if (j.contains(Keys::Azimuth))
-                    j.at(Keys::Azimuth).get_to(c.azimuth);
-                if (j.contains(Keys::Elevation))
-                    j.at(Keys::Elevation).get_to(c.elevation);
-            }
-
-            ExecuteResult execute(const std::string& currentState) const
-            {
-                if (currentState.find(StateNames::Idle) == std::string::npos &&
-                    currentState.find(StateNames::Locked) == std::string::npos)
-                {
-                    return ExecuteResult::fail("MoveRelative only valid in Idle or Locked state");
-                }
-
-                std::cout << "  [COMMAND] MoveRelative: Moving by az=" << azimuth << ", el=" << elevation << "\n";
-
-                double moveTime = std::sqrt(azimuth * azimuth + elevation * elevation) * 10;
-                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(moveTime)));
-
-                std::cout << "  [COMMAND] MoveRelative: Move complete\n";
-
-                nlohmann::json result;
-                result[Keys::MovedAz]    = azimuth;
-                result[Keys::MovedEl]    = elevation;
-                result[Keys::MoveTimeMs] = static_cast<int>(moveTime);
-                return ExecuteResult::ok(result);
-            }
-        };
-    } // namespace Commands
-
-    // ============================================================================
-    // StateMessage - Unified variant for all Events and Commands
-    // ============================================================================
-
-    // Single flat variant containing all message types (Events and Commands)
-    // The namespace distinction provides semantic clarity, but processing is uniform
-    using StateMessage = std::variant<
-        // Events (past tense - what happened)
-        Events::InitComplete, Events::InitFailed, Events::TargetFound, Events::TargetLost, Events::MeasurementComplete, Events::ErrorOccurred,
-        // Commands (imperative - what to do)
-        Commands::PowerOn, Commands::PowerOff, Commands::StartSearch, Commands::StartMeasure, Commands::StopMeasure, Commands::Reset, Commands::ReturnToIdle,
-        // Action Commands (don't change state)
-        Commands::Home, Commands::GetPosition, Commands::SetLaserPower, Commands::Compensate, Commands::GetStatus, Commands::MoveRelative>;
-
-    // Helper to get message name - works uniformly for all types via operator()
-    inline std::string getMessageName(const StateMessage& msg)
-    {
-        return std::visit([](const auto& m) { return m(); }, msg);
-    }
-
-    // ============================================================================
-    // MessageRegistry - Compile-time type registry for JSON serialization
-    // ============================================================================
-
-    /**
-     * @brief Registry for mapping message names to types and handling JSON conversion
-     *
-     * This template uses fold expressions to iterate over all types in the StateMessage
-     * variant at compile time, providing:
-     * - fromJson(): Convert JSON name + params to StateMessage variant
-     * - toJson(): Convert StateMessage variant to JSON
-     *
-     * The registry eliminates the need for manual if-else chains by using
-     * the static `name` member of each type for lookup.
-     */
-    template <typename... Types>
-    struct MessageRegistry
-    {
-        using Variant = std::variant<Types...>;
-
-        /**
-         * @brief Convert JSON name and params to a StateMessage variant
-         * @param name The message type name (e.g., "PowerOn", "TargetFound")
-         * @param params The JSON parameters for the message
-         * @return Optional containing the StateMessage if name matches, nullopt otherwise
-         */
-        static std::optional<Variant> fromJson(const std::string& name, const nlohmann::json& params)
-        {
-            std::optional<Variant> result;
-            // Fold expression: try each type until one matches
-            (tryParseType<Types>(name, params, result) || ...);
-            return result;
-        }
-
-        /**
-         * @brief Convert JSON to StateMessage, excluding action commands
-         * Action commands (those with static `sync` member) are filtered out.
-         * Used by paramsToStateMessage for HSM dispatch.
-         */
-        static std::optional<Variant> fromJsonStateChanging(const std::string& name, const nlohmann::json& params)
-        {
-            std::optional<Variant> result;
-            // Fold expression: try each type, skipping action commands
-            (tryParseTypeExcludeActions<Types>(name, params, result) || ...);
-            return result;
-        }
-
-        /**
-         * @brief Convert a StateMessage variant to JSON params
-         * @param msg The StateMessage to convert
-         * @return JSON object containing the message parameters
-         */
-        static nlohmann::json toJson(const Variant& msg)
-        {
-            return std::visit([](const auto& m) -> nlohmann::json { return m; }, msg);
-        }
-
-        /**
-         * @brief Get the name of a message type from the variant
-         * @param msg The StateMessage variant
-         * @return The static name of the contained type
-         */
-        static std::string getName(const Variant& msg)
-        {
-            return std::visit([](const auto& m) -> std::string { return m.name; }, msg);
-        }
-
-        /**
-         * @brief Check if a message type requires synchronous execution
-         * @param msg The StateMessage variant
-         * @return true if the message has sync=true, false otherwise
-         */
-        static bool isSync(const Variant& msg)
-        {
-            return std::visit(
-                [](const auto& m) -> bool
-                {
-                    using M = std::decay_t<decltype(m)>;
-                    return getSyncValue<M>();
-                },
-                msg);
-        }
-
-        // C++17-compatible detection of static sync member (public for use in dispatch)
-        template <typename T, typename = void>
-        struct has_sync : std::false_type
-        {
-        };
-
-        template <typename T>
-        struct has_sync<T, std::void_t<decltype(T::sync)>> : std::true_type
-        {
-        };
-
-        // C++17-compatible detection of execute() method (distinguishes action commands from state-changing commands)
-        template <typename T, typename = void>
-        struct has_execute : std::false_type
-        {
-        };
-
-        template <typename T>
-        struct has_execute<T, std::void_t<decltype(std::declval<T>().execute(std::declval<std::string>()))>> : std::true_type
-        {
-        };
-
-        // C++17-compatible detection of expectedState member (state-changing commands that wait for a state)
-        template <typename T, typename = void>
-        struct has_expected_state : std::false_type
-        {
-        };
-
-        template <typename T>
-        struct has_expected_state<T, std::void_t<decltype(T::expectedState)>> : std::true_type
-        {
-        };
-
-        /**
-         * @brief Get the expected state from a message variant
-         * @return Expected state string, or empty string if no expectedState defined
-         */
-        static std::string getExpectedState(const Variant& msg)
-        {
-            return std::visit(
-                [](const auto& m) -> std::string
-                {
-                    using M = std::decay_t<decltype(m)>;
-                    return getExpectedStateValue<M>();
-                },
-                msg);
-        }
-
-    private:
-        template <typename T>
-        static std::string getExpectedStateValue()
-        {
-            if constexpr (has_expected_state<T>::value)
-            {
-                return T::expectedState;
-            }
-            else
-            {
-                return "";
-            }
-        }
-        template <typename T>
-        static constexpr bool getSyncValue()
-        {
-            if constexpr (has_sync<T>::value)
-            {
-                return T::sync;
-            }
-            else
-            {
-                return false;
-            }
-        }
-
-        /**
-         * @brief Try to parse JSON into a specific type
-         * @return true if parsing succeeded (name matched), false otherwise
-         */
-        template <typename T>
-        static bool tryParseType(const std::string& name, const nlohmann::json& params, std::optional<Variant>& out)
-        {
-            if (name == T::name)
-            {
-                T value{};
-                if (!params.is_null() && !params.empty())
-                {
-                    value = params.get<T>();
-                }
-                out = value;
-                return true; // Stop the fold expression
-            }
-            return false; // Continue to next type
-        }
-
-        /**
-         * @brief Try to parse JSON into a specific type, excluding action commands
-         * Action commands have an execute() method; Events and state-changing Commands don't
-         */
-        template <typename T>
-        static bool tryParseTypeExcludeActions(const std::string& name, const nlohmann::json& params, std::optional<Variant>& out)
-        {
-            // Skip action commands (they have an execute() method)
-            if constexpr (has_execute<T>::value)
-            {
-                return false; // Continue to next type
-            }
-            else
-            {
-                return tryParseType<T>(name, params, out);
-            }
-        }
-    };
-
-    // Single registry with all StateMessage types
-    using StateMessageRegistry = MessageRegistry<
-        // Events
-        Events::InitComplete, Events::InitFailed, Events::TargetFound, Events::TargetLost, Events::MeasurementComplete, Events::ErrorOccurred,
-        // State-changing Commands
-        Commands::PowerOn, Commands::PowerOff, Commands::StartSearch, Commands::StartMeasure, Commands::StopMeasure, Commands::Reset, Commands::ReturnToIdle,
-        // Action Commands
-        Commands::Home, Commands::GetPosition, Commands::SetLaserPower, Commands::Compensate, Commands::GetStatus, Commands::MoveRelative>;
-
-    // ============================================================================
     // States - Hierarchical state definitions using nested variants
     // ============================================================================
 
@@ -921,6 +388,610 @@ namespace LaserTracker
 
     // Top-level state variant
     using State = std::variant<States::Off, States::Operational>;
+
+    // ============================================================================
+    // State Checking Helper - Type-safe state validation
+    // ============================================================================
+
+    // C++17-compatible detection of subState member
+    template <typename T, typename = void>
+    struct has_subState : std::false_type
+    {
+    };
+
+    template <typename T>
+    struct has_subState<T, std::void_t<decltype(std::declval<T>().subState)>> : std::true_type
+    {
+    };
+
+    /**
+     * @brief Check if the current state matches a specific leaf state type
+     *
+     * Recursively checks through composite states to find leaf states.
+     * Used by action command execute() methods for type-safe state validation.
+     *
+     * @tparam TargetState The leaf state type to check for (e.g., States::Idle)
+     * @param state The current state variant
+     * @return true if currently in the target state
+     */
+    template <typename TargetState, typename StateVariant>
+    bool isInState(const StateVariant& state)
+    {
+        return std::visit(
+            [](const auto& s) -> bool
+            {
+                using T = std::decay_t<decltype(s)>;
+                if constexpr (std::is_same_v<T, TargetState>)
+                {
+                    return true;
+                }
+                else if constexpr (has_subState<T>::value)
+                {
+                    // Recurse into composite states
+                    return isInState<TargetState>(s.subState);
+                }
+                else
+                {
+                    return false;
+                }
+            },
+            state);
+    }
+
+    /**
+     * @brief Get the hierarchical state name from a State variant
+     *
+     * Returns the full state path (e.g., "Operational::Tracking::Locked")
+     */
+    inline std::string getStateName(const State& state)
+    {
+        return std::visit(
+            [](const auto& s) -> std::string
+            {
+                using T = std::decay_t<decltype(s)>;
+                if constexpr (std::is_same_v<T, States::Operational>)
+                {
+                    return std::string(s.name) + "::" + s.getSubStateName();
+                }
+                else
+                {
+                    return s.name;
+                }
+            },
+            state);
+    }
+
+    // ============================================================================
+    // Commands - Imperative instructions (what to do)
+    // ============================================================================
+
+    namespace Commands
+    {
+        // --------------------------------------------------------------------
+        // State-Changing Commands
+        // --------------------------------------------------------------------
+
+        /** @brief Turn on the laser tracker power. Waits for Idle state (after InitComplete) */
+        struct PowerOn
+        {
+            static constexpr const char* name          = CommandNames::PowerOn;
+            static constexpr bool        sync          = true;
+            static constexpr const char* expectedState = StateNames::Operational_Idle; // Wait for InitComplete event
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const PowerOn&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, PowerOn&) {}
+        };
+
+        /** @brief Turn off the laser tracker power. Immediate transition to Off */
+        struct PowerOff
+        {
+            static constexpr const char* name          = CommandNames::PowerOff;
+            static constexpr bool        sync          = false;
+            static constexpr const char* expectedState = StateNames::Off; // Immediate
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const PowerOff&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, PowerOff&) {}
+        };
+
+        /** @brief Start searching for target. Waits for Locked state (after TargetFound) */
+        struct StartSearch
+        {
+            static constexpr const char* name          = CommandNames::StartSearch;
+            static constexpr bool        sync          = true;
+            static constexpr const char* expectedState = StateNames::Operational_Tracking_Locked; // Wait for TargetFound event
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const StartSearch&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, StartSearch&) {}
+        };
+
+        /** @brief Start precision measurement. Immediate transition to Measuring */
+        struct StartMeasure
+        {
+            static constexpr const char* name          = CommandNames::StartMeasure;
+            static constexpr bool        sync          = false;
+            static constexpr const char* expectedState = StateNames::Operational_Tracking_Measuring; // Immediate
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const StartMeasure&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, StartMeasure&) {}
+        };
+
+        /** @brief Stop measurement and return to locked. Immediate transition to Locked */
+        struct StopMeasure
+        {
+            static constexpr const char* name          = CommandNames::StopMeasure;
+            static constexpr bool        sync          = false;
+            static constexpr const char* expectedState = StateNames::Operational_Tracking_Locked; // Immediate
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const StopMeasure&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, StopMeasure&) {}
+        };
+
+        /** @brief Reset the system from error state. Waits for Idle state (after InitComplete) */
+        struct Reset
+        {
+            static constexpr const char* name          = CommandNames::Reset;
+            static constexpr bool        sync          = true;
+            static constexpr const char* expectedState = StateNames::Operational_Idle; // Wait for InitComplete event
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const Reset&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, Reset&) {}
+        };
+
+        /** @brief Return from tracking to idle state. Immediate transition to Idle */
+        struct ReturnToIdle
+        {
+            static constexpr const char* name          = CommandNames::ReturnToIdle;
+            static constexpr bool        sync          = false;
+            static constexpr const char* expectedState = StateNames::Operational_Idle; // Immediate
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const ReturnToIdle&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, ReturnToIdle&) {}
+        };
+
+        // --------------------------------------------------------------------
+        // Action Commands (don't change state, may be state-restricted)
+        // --------------------------------------------------------------------
+
+        /** @brief Home - moves to home position. Valid in: Idle. Sync: Yes */
+        struct Home
+        {
+            static constexpr const char* name = CommandNames::Home;
+            static constexpr bool        sync = true;
+            double                       speed = 100.0;
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const Home& c) { j = nlohmann::json{{Keys::Speed, c.speed}}; }
+            friend void from_json(const nlohmann::json& j, Home& c)
+            {
+                if (j.contains(Keys::Speed))
+                    j.at(Keys::Speed).get_to(c.speed);
+            }
+
+            ExecuteResult execute(const State& currentState) const
+            {
+                if (!isInState<States::Idle>(currentState))
+                {
+                    return ExecuteResult::fail("Home command only valid in Idle state");
+                }
+
+                std::cout << "  [COMMAND] Home: Moving to home position at " << speed << "% speed\n";
+                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(5000 / (speed / 100.0))));
+                std::cout << "  [COMMAND] Home: Homing complete\n";
+
+                nlohmann::json result;
+                result[Keys::Position][Keys::Azimuth]   = 0.0;
+                result[Keys::Position][Keys::Elevation] = 0.0;
+                return ExecuteResult::ok(result);
+            }
+        };
+
+        /** @brief GetPosition - retrieves current position. Valid in: Idle, Locked, Measuring. Sync: No */
+        struct GetPosition
+        {
+            static constexpr const char* name = CommandNames::GetPosition;
+            static constexpr bool        sync = false;
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const GetPosition&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, GetPosition&) {}
+
+            ExecuteResult execute(const State& currentState) const
+            {
+                if (isInState<States::Off>(currentState) || isInState<States::Initializing>(currentState) ||
+                    isInState<States::Error>(currentState))
+                {
+                    return ExecuteResult::fail("GetPosition not available in current state");
+                }
+
+                nlohmann::json result;
+                result[Keys::Position][Keys::X]         = 1234.567;
+                result[Keys::Position][Keys::Y]         = 2345.678;
+                result[Keys::Position][Keys::Z]         = 345.789;
+                result[Keys::Position][Keys::Azimuth]   = 45.123;
+                result[Keys::Position][Keys::Elevation] = 12.456;
+
+                std::cout << "  [COMMAND] GetPosition: Returned current position\n";
+                return ExecuteResult::ok(result);
+            }
+        };
+
+        /** @brief SetLaserPower - adjusts laser power. Valid in: Any Operational. Sync: No */
+        struct SetLaserPower
+        {
+            static constexpr const char* name = CommandNames::SetLaserPower;
+            static constexpr bool        sync = false;
+            double                       powerLevel = 1.0;
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const SetLaserPower& c) { j = nlohmann::json{{Keys::PowerLevel, c.powerLevel}}; }
+            friend void from_json(const nlohmann::json& j, SetLaserPower& c)
+            {
+                if (j.contains(Keys::PowerLevel))
+                    j.at(Keys::PowerLevel).get_to(c.powerLevel);
+            }
+
+            ExecuteResult execute(const State& currentState) const
+            {
+                if (isInState<States::Off>(currentState))
+                {
+                    return ExecuteResult::fail("SetLaserPower not available when powered off");
+                }
+
+                if (powerLevel < 0.0 || powerLevel > 1.0)
+                {
+                    return ExecuteResult::fail("Power level must be between 0.0 and 1.0");
+                }
+
+                std::cout << "  [COMMAND] SetLaserPower: Set to " << (powerLevel * 100) << "%\n";
+
+                nlohmann::json result;
+                result[Keys::PowerLevel] = powerLevel;
+                return ExecuteResult::ok(result);
+            }
+        };
+
+        /** @brief Compensate - applies environmental compensation. Valid in: Idle, Locked. Sync: Yes */
+        struct Compensate
+        {
+            static constexpr const char* name = CommandNames::Compensate;
+            static constexpr bool        sync = true;
+            double                       temperature = 20.0;
+            double                       pressure    = 1013.25;
+            double                       humidity    = 50.0;
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const Compensate& c)
+            {
+                j = nlohmann::json{{Keys::Temperature, c.temperature}, {Keys::Pressure, c.pressure}, {Keys::Humidity, c.humidity}};
+            }
+            friend void from_json(const nlohmann::json& j, Compensate& c)
+            {
+                if (j.contains(Keys::Temperature))
+                    j.at(Keys::Temperature).get_to(c.temperature);
+                if (j.contains(Keys::Pressure))
+                    j.at(Keys::Pressure).get_to(c.pressure);
+                if (j.contains(Keys::Humidity))
+                    j.at(Keys::Humidity).get_to(c.humidity);
+            }
+
+            ExecuteResult execute(const State& currentState) const
+            {
+                if (!isInState<States::Idle>(currentState) && !isInState<States::Locked>(currentState))
+                {
+                    return ExecuteResult::fail("Compensate only valid in Idle or Locked state");
+                }
+
+                std::cout << "  [COMMAND] Compensate: Applying environmental compensation\n";
+                std::cout << "            T=" << temperature << "C, P=" << pressure << "hPa, H=" << humidity << "%\n";
+
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+                double factor = 1.0 + ((temperature - 20.0) * 0.000001) + ((pressure - 1013.25) * 0.0000001);
+                std::cout << "  [COMMAND] Compensate: Factor = " << std::fixed << std::setprecision(8) << factor << "\n";
+
+                nlohmann::json result;
+                result[Keys::CompensationFactor] = factor;
+                result[Keys::Applied]            = true;
+                return ExecuteResult::ok(result);
+            }
+        };
+
+        /** @brief GetStatus - retrieves system status. Valid in: Any. Sync: No */
+        struct GetStatus
+        {
+            static constexpr const char* name = CommandNames::GetStatus;
+            static constexpr bool        sync = false;
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const GetStatus&) { j = nlohmann::json::object(); }
+            friend void from_json(const nlohmann::json&, GetStatus&) {}
+
+            ExecuteResult execute(const State& currentState) const
+            {
+                std::string stateName = getStateName(currentState);
+
+                nlohmann::json result;
+                result[Keys::State]   = stateName;
+                result[Keys::Healthy] = !isInState<States::Error>(currentState);
+                result[Keys::Powered] = !isInState<States::Off>(currentState);
+
+                std::cout << "  [COMMAND] GetStatus: State=" << stateName << "\n";
+                return ExecuteResult::ok(result);
+            }
+        };
+
+        /** @brief MoveRelative - moves tracker by relative amount. Valid in: Idle, Locked. Sync: Yes */
+        struct MoveRelative
+        {
+            static constexpr const char* name = CommandNames::MoveRelative;
+            static constexpr bool        sync = true;
+            double                       azimuth   = 0.0;
+            double                       elevation = 0.0;
+            std::string                  operator()() const { return name; }
+
+            friend void to_json(nlohmann::json& j, const MoveRelative& c) { j = nlohmann::json{{Keys::Azimuth, c.azimuth}, {Keys::Elevation, c.elevation}}; }
+            friend void from_json(const nlohmann::json& j, MoveRelative& c)
+            {
+                if (j.contains(Keys::Azimuth))
+                    j.at(Keys::Azimuth).get_to(c.azimuth);
+                if (j.contains(Keys::Elevation))
+                    j.at(Keys::Elevation).get_to(c.elevation);
+            }
+
+            ExecuteResult execute(const State& currentState) const
+            {
+                if (!isInState<States::Idle>(currentState) && !isInState<States::Locked>(currentState))
+                {
+                    return ExecuteResult::fail("MoveRelative only valid in Idle or Locked state");
+                }
+
+                std::cout << "  [COMMAND] MoveRelative: Moving by az=" << azimuth << ", el=" << elevation << "\n";
+
+                double moveTime = std::sqrt(azimuth * azimuth + elevation * elevation) * 10;
+                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(moveTime)));
+
+                std::cout << "  [COMMAND] MoveRelative: Move complete\n";
+
+                nlohmann::json result;
+                result[Keys::MovedAz]    = azimuth;
+                result[Keys::MovedEl]    = elevation;
+                result[Keys::MoveTimeMs] = static_cast<int>(moveTime);
+                return ExecuteResult::ok(result);
+            }
+        };
+    } // namespace Commands
+
+    // ============================================================================
+    // StateMessage - Unified variant for all Events and Commands
+    // ============================================================================
+
+    // Single flat variant containing all message types (Events and Commands)
+    // The namespace distinction provides semantic clarity, but processing is uniform
+    using StateMessage = std::variant<
+        // Events (past tense - what happened)
+        Events::InitComplete, Events::InitFailed, Events::TargetFound, Events::TargetLost, Events::MeasurementComplete, Events::ErrorOccurred,
+        // Commands (imperative - what to do)
+        Commands::PowerOn, Commands::PowerOff, Commands::StartSearch, Commands::StartMeasure, Commands::StopMeasure, Commands::Reset, Commands::ReturnToIdle,
+        // Action Commands (don't change state)
+        Commands::Home, Commands::GetPosition, Commands::SetLaserPower, Commands::Compensate, Commands::GetStatus, Commands::MoveRelative>;
+
+    // Helper to get message name - works uniformly for all types via operator()
+    inline std::string getMessageName(const StateMessage& msg)
+    {
+        return std::visit([](const auto& m) { return m(); }, msg);
+    }
+
+    // ============================================================================
+    // MessageRegistry - Compile-time type registry for JSON serialization
+    // ============================================================================
+
+    /**
+     * @brief Registry for mapping message names to types and handling JSON conversion
+     *
+     * This template uses fold expressions to iterate over all types in the StateMessage
+     * variant at compile time, providing:
+     * - fromJson(): Convert JSON name + params to StateMessage variant
+     * - toJson(): Convert StateMessage variant to JSON
+     *
+     * The registry eliminates the need for manual if-else chains by using
+     * the static `name` member of each type for lookup.
+     */
+    template <typename... Types>
+    struct MessageRegistry
+    {
+        using Variant = std::variant<Types...>;
+
+        /**
+         * @brief Convert JSON name and params to a StateMessage variant
+         * @param name The message type name (e.g., "PowerOn", "TargetFound")
+         * @param params The JSON parameters for the message
+         * @return Optional containing the StateMessage if name matches, nullopt otherwise
+         */
+        static std::optional<Variant> fromJson(const std::string& name, const nlohmann::json& params)
+        {
+            std::optional<Variant> result;
+            // Fold expression: try each type until one matches
+            (tryParseType<Types>(name, params, result) || ...);
+            return result;
+        }
+
+        /**
+         * @brief Convert JSON to StateMessage, excluding action commands
+         * Action commands (those with static `sync` member) are filtered out.
+         * Used by paramsToStateMessage for HSM dispatch.
+         */
+        static std::optional<Variant> fromJsonStateChanging(const std::string& name, const nlohmann::json& params)
+        {
+            std::optional<Variant> result;
+            // Fold expression: try each type, skipping action commands
+            (tryParseTypeExcludeActions<Types>(name, params, result) || ...);
+            return result;
+        }
+
+        /**
+         * @brief Convert a StateMessage variant to JSON params
+         * @param msg The StateMessage to convert
+         * @return JSON object containing the message parameters
+         */
+        static nlohmann::json toJson(const Variant& msg)
+        {
+            return std::visit([](const auto& m) -> nlohmann::json { return m; }, msg);
+        }
+
+        /**
+         * @brief Get the name of a message type from the variant
+         * @param msg The StateMessage variant
+         * @return The static name of the contained type
+         */
+        static std::string getName(const Variant& msg)
+        {
+            return std::visit([](const auto& m) -> std::string { return m.name; }, msg);
+        }
+
+        /**
+         * @brief Check if a message type requires synchronous execution
+         * @param msg The StateMessage variant
+         * @return true if the message has sync=true, false otherwise
+         */
+        static bool isSync(const Variant& msg)
+        {
+            return std::visit(
+                [](const auto& m) -> bool
+                {
+                    using M = std::decay_t<decltype(m)>;
+                    return getSyncValue<M>();
+                },
+                msg);
+        }
+
+        // C++17-compatible detection of static sync member (public for use in dispatch)
+        template <typename T, typename = void>
+        struct has_sync : std::false_type
+        {
+        };
+
+        template <typename T>
+        struct has_sync<T, std::void_t<decltype(T::sync)>> : std::true_type
+        {
+        };
+
+        // C++17-compatible detection of execute() method (distinguishes action commands from state-changing commands)
+        template <typename T, typename = void>
+        struct has_execute : std::false_type
+        {
+        };
+
+        template <typename T>
+        struct has_execute<T, std::void_t<decltype(std::declval<T>().execute(std::declval<State>()))>> : std::true_type
+        {
+        };
+
+        // C++17-compatible detection of expectedState member (state-changing commands that wait for a state)
+        template <typename T, typename = void>
+        struct has_expected_state : std::false_type
+        {
+        };
+
+        template <typename T>
+        struct has_expected_state<T, std::void_t<decltype(T::expectedState)>> : std::true_type
+        {
+        };
+
+        /**
+         * @brief Get the expected state from a message variant
+         * @return Expected state string, or empty string if no expectedState defined
+         */
+        static std::string getExpectedState(const Variant& msg)
+        {
+            return std::visit(
+                [](const auto& m) -> std::string
+                {
+                    using M = std::decay_t<decltype(m)>;
+                    return getExpectedStateValue<M>();
+                },
+                msg);
+        }
+
+    private:
+        template <typename T>
+        static std::string getExpectedStateValue()
+        {
+            if constexpr (has_expected_state<T>::value)
+            {
+                return T::expectedState;
+            }
+            else
+            {
+                return "";
+            }
+        }
+        template <typename T>
+        static constexpr bool getSyncValue()
+        {
+            if constexpr (has_sync<T>::value)
+            {
+                return T::sync;
+            }
+            else
+            {
+                return false;
+            }
+        }
+
+        /**
+         * @brief Try to parse JSON into a specific type
+         * @return true if parsing succeeded (name matched), false otherwise
+         */
+        template <typename T>
+        static bool tryParseType(const std::string& name, const nlohmann::json& params, std::optional<Variant>& out)
+        {
+            if (name == T::name)
+            {
+                T value{};
+                if (!params.is_null() && !params.empty())
+                {
+                    value = params.get<T>();
+                }
+                out = value;
+                return true; // Stop the fold expression
+            }
+            return false; // Continue to next type
+        }
+
+        /**
+         * @brief Try to parse JSON into a specific type, excluding action commands
+         * Action commands have an execute() method; Events and state-changing Commands don't
+         */
+        template <typename T>
+        static bool tryParseTypeExcludeActions(const std::string& name, const nlohmann::json& params, std::optional<Variant>& out)
+        {
+            // Skip action commands (they have an execute() method)
+            if constexpr (has_execute<T>::value)
+            {
+                return false; // Continue to next type
+            }
+            else
+            {
+                return tryParseType<T>(name, params, out);
+            }
+        }
+    };
+
+    // Single registry with all StateMessage types
+    using StateMessageRegistry = MessageRegistry<
+        // Events
+        Events::InitComplete, Events::InitFailed, Events::TargetFound, Events::TargetLost, Events::MeasurementComplete, Events::ErrorOccurred,
+        // State-changing Commands
+        Commands::PowerOn, Commands::PowerOff, Commands::StartSearch, Commands::StartMeasure, Commands::StopMeasure, Commands::Reset, Commands::ReturnToIdle,
+        // Action Commands
+        Commands::Home, Commands::GetPosition, Commands::SetLaserPower, Commands::Compensate, Commands::GetStatus, Commands::MoveRelative>;
 
     // ============================================================================
     // HSM - Hierarchical State Machine (internal implementation)
@@ -1732,6 +1803,15 @@ namespace LaserTracker
             return hsm_.isInState<S>();
         }
 
+        /**
+         * @brief Get copy of current state (thread-safe)
+         */
+        State getState() const
+        {
+            std::lock_guard<std::mutex> lock(stateMutex_);
+            return hsm_.getState();
+        }
+
       private:
         HSM                           hsm_;
         std::thread                   workerThread_;
@@ -1980,7 +2060,7 @@ namespace LaserTracker
                 return Message::createResponse(msg.id, false, {}, "Unknown message: " + msg.name);
             }
 
-            std::string currentState = getCurrentStateName();
+            State currentState = getState();
 
             // Use std::visit to dispatch to the command's execute() method
             return std::visit(
