@@ -2,9 +2,14 @@
 
 /**
  * @file Keywords.hpp
- * @brief Compile-time string constants for JSON keys and field names
+ * @brief Compile-time string constants for all identifiers in the HSM
  *
- * This file defines all string literals used as JSON keys throughout the HSM.
+ * This file defines all string literals used throughout the HSM:
+ * - Keys: JSON field names for serialization
+ * - StateNames: State identifiers and hierarchical paths
+ * - EventNames: Event message identifiers
+ * - CommandNames: Command message identifiers (state-changing and action)
+ *
  * Using constexpr ensures:
  * - Compile-time string constants (no runtime allocation)
  * - Single point of definition (easy to rename/refactor)
@@ -64,4 +69,79 @@ namespace LaserTracker
         inline constexpr const char* NeedsReply  = "needsReply";
 
     } // namespace Keys
+
+    /**
+     * @brief State name constants for state checking and expectedState values
+     *
+     * Leaf state names are used for find()-based state validation in execute() methods.
+     * Full paths are used for expectedState matching after state-changing commands.
+     */
+    namespace StateNames
+    {
+        // Top-level states
+        inline constexpr const char* Off         = "Off";
+        inline constexpr const char* Operational = "Operational";
+
+        // Operational sub-states
+        inline constexpr const char* Initializing = "Initializing";
+        inline constexpr const char* Idle         = "Idle";
+        inline constexpr const char* Tracking     = "Tracking";
+        inline constexpr const char* Error        = "Error";
+
+        // Tracking sub-states
+        inline constexpr const char* Searching = "Searching";
+        inline constexpr const char* Locked    = "Locked";
+        inline constexpr const char* Measuring = "Measuring";
+
+        // Full hierarchical state paths (for expectedState matching)
+        inline constexpr const char* Operational_Idle               = "Operational::Idle";
+        inline constexpr const char* Operational_Tracking_Searching = "Operational::Tracking::Searching";
+        inline constexpr const char* Operational_Tracking_Locked    = "Operational::Tracking::Locked";
+        inline constexpr const char* Operational_Tracking_Measuring = "Operational::Tracking::Measuring";
+
+    } // namespace StateNames
+
+    /**
+     * @brief Event name constants (past tense - "what happened")
+     *
+     * Events represent external occurrences that the state machine reacts to.
+     */
+    namespace EventNames
+    {
+        inline constexpr const char* InitComplete        = "InitComplete";
+        inline constexpr const char* InitFailed          = "InitFailed";
+        inline constexpr const char* TargetFound         = "TargetFound";
+        inline constexpr const char* TargetLost          = "TargetLost";
+        inline constexpr const char* MeasurementComplete = "MeasurementComplete";
+        inline constexpr const char* ErrorOccurred       = "ErrorOccurred";
+
+    } // namespace EventNames
+
+    /**
+     * @brief Command name constants (imperative - "what to do")
+     *
+     * Commands are instructions that drive the state machine.
+     * Divided into state-changing commands and action commands.
+     */
+    namespace CommandNames
+    {
+        // State-changing commands (trigger state transitions)
+        inline constexpr const char* PowerOn      = "PowerOn";
+        inline constexpr const char* PowerOff     = "PowerOff";
+        inline constexpr const char* StartSearch  = "StartSearch";
+        inline constexpr const char* StartMeasure = "StartMeasure";
+        inline constexpr const char* StopMeasure  = "StopMeasure";
+        inline constexpr const char* Reset        = "Reset";
+        inline constexpr const char* ReturnToIdle = "ReturnToIdle";
+
+        // Action commands (execute operations, don't change state)
+        inline constexpr const char* Home          = "Home";
+        inline constexpr const char* GetPosition   = "GetPosition";
+        inline constexpr const char* SetLaserPower = "SetLaserPower";
+        inline constexpr const char* Compensate    = "Compensate";
+        inline constexpr const char* GetStatus     = "GetStatus";
+        inline constexpr const char* MoveRelative  = "MoveRelative";
+
+    } // namespace CommandNames
+
 } // namespace LaserTracker

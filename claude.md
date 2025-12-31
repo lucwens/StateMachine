@@ -51,6 +51,59 @@ struct Example {
 2. When adding code examples to documentation (README.md, etc.), use the same formatting style
 3. Run clang-format before committing if unsure about formatting
 
+## Keywords.hpp: No Naked Identifier Strings
+
+**CRITICAL RULE**: All identifier strings MUST be defined in `Keywords.hpp`. No naked string literals for identifiers are allowed outside this file.
+
+### What Goes in Keywords.hpp
+
+| Namespace | Purpose | Examples |
+|-----------|---------|----------|
+| `Keys` | JSON field names for serialization | `"id"`, `"name"`, `"params"`, `"position"` |
+| `StateNames` | State identifiers and paths | `"Off"`, `"Idle"`, `"Operational::Idle"` |
+| `EventNames` | Event message identifiers | `"InitComplete"`, `"TargetFound"` |
+| `CommandNames` | Command message identifiers | `"PowerOn"`, `"Home"`, `"GetStatus"` |
+
+### Correct Usage
+
+```cpp
+// CORRECT - use constants from Keywords.hpp
+struct PowerOn
+{
+    static constexpr const char* name          = CommandNames::PowerOn;
+    static constexpr const char* expectedState = StateNames::Operational_Idle;
+};
+
+if (currentState.find(StateNames::Idle) == std::string::npos)
+{
+    return ExecuteResult::fail("Not in Idle state");
+}
+
+result[Keys::Position][Keys::X] = 123.0;
+```
+
+### Incorrect Usage (DO NOT DO THIS)
+
+```cpp
+// WRONG - naked string literals
+struct PowerOn
+{
+    static constexpr const char* name          = "PowerOn";  // BAD!
+    static constexpr const char* expectedState = "Operational::Idle";  // BAD!
+};
+
+if (currentState.find("Idle") == std::string::npos)  // BAD!
+
+result["position"]["x"] = 123.0;  // BAD!
+```
+
+### Why This Matters
+
+- **Single point of definition**: Rename once in Keywords.hpp, updated everywhere
+- **Compile-time safety**: Typos caught by compiler, not at runtime
+- **Refactoring support**: IDE can find all usages of a constant
+- **Inventory**: Keywords.hpp serves as a complete list of all identifiers in the system
+
 ## Markdown Formatting Rules
 
 When writing or editing markdown files (README.md, etc.):

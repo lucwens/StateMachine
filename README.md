@@ -1351,7 +1351,7 @@ StateMachine/
 10. **Type Registry Pattern**: Single `MessageRegistry` template eliminates manual if-else chains for JSON↔variant conversion using fold expressions; action commands filtered via `has_execute` trait (detecting `execute()` method)
 11. **ADL Serialization**: Each message type has `to_json`/`from_json` friend functions for automatic nlohmann/json integration
 12. **Self-Executing Commands**: Action commands have an `execute()` method - the command struct contains all logic (validation, execution, result). Dispatcher uses `std::visit` to call it.
-13. **Compile-Time String Constants**: All JSON keys defined in `Keywords.hpp` as `inline constexpr` (position, state, command params, event params, results, message protocol) - no runtime string allocation, single point of definition, type-safe refactoring.
+13. **Compile-Time String Constants**: All identifier strings defined in `Keywords.hpp` as `inline constexpr` - organized into namespaces: `Keys` (JSON fields), `StateNames` (state identifiers and paths), `EventNames` (event identifiers), `CommandNames` (command identifiers). No naked string literals allowed outside Keywords.hpp - ensures single point of definition, compile-time safety, and easy refactoring.
 14. **Unified Sync Flag**: Both state-changing commands and action commands support `sync` flag - when `true`, blocks other messages during execution. State-changing commands use this for critical transitions (PowerOn, Reset).
 15. **Expected State Pattern**: State-changing commands can specify an `expectedState` that must be reached before the command returns. Commands like `StartSearch` wait for `TargetFound` event to reach `Locked` state, ensuring the caller knows the operation completed (or timed out).
 
@@ -1609,31 +1609,109 @@ bool handleMessage(States::Idle& /*state*/, const StateMessage& msg)
 }
 ```
 
-### Pattern 7: Keywords.hpp
+### Pattern 7: Keywords.hpp (CRITICAL - No Naked Strings)
 
-All JSON keys are compile-time constants:
+**All identifier strings MUST be defined in Keywords.hpp. No naked string literals allowed outside this file.**
 
 ```cpp
 #pragma once
 
-namespace Keys
+namespace LaserTracker  // or your device namespace
 {
-    // Message protocol
-    inline constexpr const char* Id = "id";
-    inline constexpr const char* Name = "name";
-    inline constexpr const char* Params = "params";
-    inline constexpr const char* Success = "success";
-    inline constexpr const char* Error = "error";
+    // JSON field names for serialization
+    namespace Keys
+    {
+        inline constexpr const char* Id       = "id";
+        inline constexpr const char* Name     = "name";
+        inline constexpr const char* Params   = "params";
+        inline constexpr const char* Success  = "success";
+        inline constexpr const char* Error    = "error";
+        inline constexpr const char* State    = "state";
+        inline constexpr const char* Position = "position";
+        inline constexpr const char* X        = "x";
+        inline constexpr const char* Y        = "y";
+        inline constexpr const char* Z        = "z";
+        // Add all JSON keys used in Events and Commands
+    }
 
-    // State-specific keys
-    inline constexpr const char* State = "state";
-    inline constexpr const char* Position = "position";
-    inline constexpr const char* X = "x";
-    inline constexpr const char* Y = "y";
-    inline constexpr const char* Z = "z";
+    // State name identifiers
+    namespace StateNames
+    {
+        // Leaf state names (for find()-based validation in execute())
+        inline constexpr const char* Off          = "Off";
+        inline constexpr const char* Initializing = "Initializing";
+        inline constexpr const char* Idle         = "Idle";
+        inline constexpr const char* Error        = "Error";
+        inline constexpr const char* Searching    = "Searching";
+        inline constexpr const char* Locked       = "Locked";
+        // ... all state names used in the HSM
 
-    // Add all keys used in your Events and Commands
+        // Full hierarchical paths (for expectedState matching)
+        inline constexpr const char* Operational_Idle            = "Operational::Idle";
+        inline constexpr const char* Operational_Tracking_Locked = "Operational::Tracking::Locked";
+        // ... all state paths used in expectedState
+    }
+
+    // Event name identifiers (past tense - "what happened")
+    namespace EventNames
+    {
+        inline constexpr const char* InitComplete        = "InitComplete";
+        inline constexpr const char* InitFailed          = "InitFailed";
+        inline constexpr const char* TargetFound         = "TargetFound";
+        inline constexpr const char* TargetLost          = "TargetLost";
+        inline constexpr const char* MeasurementComplete = "MeasurementComplete";
+        inline constexpr const char* ErrorOccurred       = "ErrorOccurred";
+    }
+
+    // Command name identifiers (imperative - "what to do")
+    namespace CommandNames
+    {
+        // State-changing commands
+        inline constexpr const char* PowerOn      = "PowerOn";
+        inline constexpr const char* PowerOff     = "PowerOff";
+        inline constexpr const char* StartSearch  = "StartSearch";
+        inline constexpr const char* StartMeasure = "StartMeasure";
+        inline constexpr const char* Reset        = "Reset";
+
+        // Action commands
+        inline constexpr const char* Home        = "Home";
+        inline constexpr const char* GetPosition = "GetPosition";
+        inline constexpr const char* GetStatus   = "GetStatus";
+        inline constexpr const char* Compensate  = "Compensate";
+    }
 }
+```
+
+**Usage - All identifiers reference Keywords.hpp constants:**
+
+```cpp
+// States use StateNames
+struct Idle
+{
+    static constexpr const char* name = StateNames::Idle;  // NOT "Idle"
+};
+
+// Events use EventNames
+struct InitComplete
+{
+    static constexpr const char* name = EventNames::InitComplete;  // NOT "InitComplete"
+};
+
+// Commands use CommandNames and StateNames
+struct PowerOn
+{
+    static constexpr const char* name          = CommandNames::PowerOn;  // NOT "PowerOn"
+    static constexpr const char* expectedState = StateNames::Operational_Idle;  // NOT "Operational::Idle"
+};
+
+// State validation in execute() uses StateNames
+if (currentState.find(StateNames::Idle) == std::string::npos)  // NOT "Idle"
+{
+    return ExecuteResult::fail("Not in Idle state");
+}
+
+// JSON serialization uses Keys
+result[Keys::Position][Keys::X] = 123.0;  // NOT "position", "x"
 ```
 
 ### Pattern 8: Code Formatting (CRITICAL)
@@ -1740,21 +1818,47 @@ Ensure the code:
 
 ### Checklist for Generated Code
 
-- [ ] All states have `static constexpr const char* name`
+**Keywords.hpp (No Naked Strings):**
+
+- [ ] Keywords.hpp has ALL namespaces: `Keys`, `StateNames`, `EventNames`, `CommandNames`
+- [ ] ALL JSON keys are in `Keys` namespace
+- [ ] ALL state names are in `StateNames` namespace (leaf names AND full paths)
+- [ ] ALL event names are in `EventNames` namespace
+- [ ] ALL command names are in `CommandNames` namespace
+- [ ] NO naked string literals for identifiers outside Keywords.hpp
+
+**States:**
+
+- [ ] All states have `static constexpr const char* name = StateNames::XXX`
 - [ ] All states have `onEntry()` and `onExit()` methods
 - [ ] Composite states have sub-state variant and proper entry/exit ordering
+
+**Events:**
+
 - [ ] All Events are in `namespace Events` with past-tense names
+- [ ] All events have `static constexpr const char* name = EventNames::XXX`
+- [ ] All events have `operator()()` returning name
+- [ ] All events have `to_json` and `from_json` friend functions
+
+**Commands:**
+
 - [ ] All Commands are in `namespace Commands` with imperative names
+- [ ] All commands have `static constexpr const char* name = CommandNames::XXX`
 - [ ] All commands (state-changing AND action) have `static constexpr bool sync`
-- [ ] State-changing commands have `static constexpr const char* expectedState`
+- [ ] State-changing commands have `static constexpr const char* expectedState = StateNames::XXX`
 - [ ] Commands waiting for events have `expectedState` set to target state (e.g., StartSearch → Locked)
 - [ ] Action commands have `execute()` method for validation and execution logic
-- [ ] All message types have `operator()()` returning name
-- [ ] All message types have `to_json` and `from_json` friend functions
+- [ ] State validation in `execute()` uses `StateNames::XXX` (not naked strings)
+- [ ] All commands have `operator()()` returning name
+- [ ] All commands have `to_json` and `from_json` friend functions
+
+**Registry and Handlers:**
+
 - [ ] StateMessage variant includes ALL events and commands
 - [ ] StateMessageRegistry includes ALL types
-- [ ] Keywords.hpp has ALL JSON keys used anywhere
 - [ ] Message handlers cover ALL valid transitions
+
+**Code Style:**
+
 - [ ] Code uses Allman/Microsoft brace style
-- [ ] State restrictions validated in action command `execute()` methods
 - [ ] Critical transitions (PowerOn, Reset) have `sync = true`

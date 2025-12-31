@@ -125,7 +125,7 @@ namespace LaserTracker
         /** @brief Initialization completed successfully */
         struct InitComplete
         {
-            static constexpr const char* name = "InitComplete";
+            static constexpr const char* name = EventNames::InitComplete;
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const InitComplete&) { j = nlohmann::json::object(); }
@@ -135,7 +135,7 @@ namespace LaserTracker
         /** @brief Initialization failed with error */
         struct InitFailed
         {
-            static constexpr const char* name = "InitFailed";
+            static constexpr const char* name = EventNames::InitFailed;
             std::string                  errorReason;
             std::string                  operator()() const { return std::string(name) + ": " + errorReason; }
 
@@ -150,7 +150,7 @@ namespace LaserTracker
         /** @brief Target retro reflector was found */
         struct TargetFound
         {
-            static constexpr const char* name = "TargetFound";
+            static constexpr const char* name = EventNames::TargetFound;
             double                       distance_mm = 0.0;
             std::string                  operator()() const
             {
@@ -170,7 +170,7 @@ namespace LaserTracker
         /** @brief Target was lost during tracking */
         struct TargetLost
         {
-            static constexpr const char* name = "TargetLost";
+            static constexpr const char* name = EventNames::TargetLost;
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const TargetLost&) { j = nlohmann::json::object(); }
@@ -180,7 +180,7 @@ namespace LaserTracker
         /** @brief A measurement point was recorded */
         struct MeasurementComplete
         {
-            static constexpr const char* name = "MeasurementComplete";
+            static constexpr const char* name = EventNames::MeasurementComplete;
             double                       x = 0.0, y = 0.0, z = 0.0;
             std::string                  operator()() const
             {
@@ -204,7 +204,7 @@ namespace LaserTracker
         /** @brief An error occurred in the system */
         struct ErrorOccurred
         {
-            static constexpr const char* name = "ErrorOccurred";
+            static constexpr const char* name = EventNames::ErrorOccurred;
             int                          errorCode = 0;
             std::string                  description;
             std::string                  operator()() const { return "Error[" + std::to_string(errorCode) + "]: " + description; }
@@ -233,9 +233,9 @@ namespace LaserTracker
         /** @brief Turn on the laser tracker power. Waits for Idle state (after InitComplete) */
         struct PowerOn
         {
-            static constexpr const char* name          = "PowerOn";
+            static constexpr const char* name          = CommandNames::PowerOn;
             static constexpr bool        sync          = true;
-            static constexpr const char* expectedState = "Operational::Idle"; // Wait for InitComplete event
+            static constexpr const char* expectedState = StateNames::Operational_Idle; // Wait for InitComplete event
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const PowerOn&) { j = nlohmann::json::object(); }
@@ -245,9 +245,9 @@ namespace LaserTracker
         /** @brief Turn off the laser tracker power. Immediate transition to Off */
         struct PowerOff
         {
-            static constexpr const char* name          = "PowerOff";
+            static constexpr const char* name          = CommandNames::PowerOff;
             static constexpr bool        sync          = false;
-            static constexpr const char* expectedState = "Off"; // Immediate
+            static constexpr const char* expectedState = StateNames::Off; // Immediate
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const PowerOff&) { j = nlohmann::json::object(); }
@@ -257,9 +257,9 @@ namespace LaserTracker
         /** @brief Start searching for target. Waits for Locked state (after TargetFound) */
         struct StartSearch
         {
-            static constexpr const char* name          = "StartSearch";
+            static constexpr const char* name          = CommandNames::StartSearch;
             static constexpr bool        sync          = true;
-            static constexpr const char* expectedState = "Operational::Tracking::Locked"; // Wait for TargetFound event
+            static constexpr const char* expectedState = StateNames::Operational_Tracking_Locked; // Wait for TargetFound event
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const StartSearch&) { j = nlohmann::json::object(); }
@@ -269,9 +269,9 @@ namespace LaserTracker
         /** @brief Start precision measurement. Immediate transition to Measuring */
         struct StartMeasure
         {
-            static constexpr const char* name          = "StartMeasure";
+            static constexpr const char* name          = CommandNames::StartMeasure;
             static constexpr bool        sync          = false;
-            static constexpr const char* expectedState = "Operational::Tracking::Measuring"; // Immediate
+            static constexpr const char* expectedState = StateNames::Operational_Tracking_Measuring; // Immediate
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const StartMeasure&) { j = nlohmann::json::object(); }
@@ -281,9 +281,9 @@ namespace LaserTracker
         /** @brief Stop measurement and return to locked. Immediate transition to Locked */
         struct StopMeasure
         {
-            static constexpr const char* name          = "StopMeasure";
+            static constexpr const char* name          = CommandNames::StopMeasure;
             static constexpr bool        sync          = false;
-            static constexpr const char* expectedState = "Operational::Tracking::Locked"; // Immediate
+            static constexpr const char* expectedState = StateNames::Operational_Tracking_Locked; // Immediate
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const StopMeasure&) { j = nlohmann::json::object(); }
@@ -293,9 +293,9 @@ namespace LaserTracker
         /** @brief Reset the system from error state. Waits for Idle state (after InitComplete) */
         struct Reset
         {
-            static constexpr const char* name          = "Reset";
+            static constexpr const char* name          = CommandNames::Reset;
             static constexpr bool        sync          = true;
-            static constexpr const char* expectedState = "Operational::Idle"; // Wait for InitComplete event
+            static constexpr const char* expectedState = StateNames::Operational_Idle; // Wait for InitComplete event
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const Reset&) { j = nlohmann::json::object(); }
@@ -305,9 +305,9 @@ namespace LaserTracker
         /** @brief Return from tracking to idle state. Immediate transition to Idle */
         struct ReturnToIdle
         {
-            static constexpr const char* name          = "ReturnToIdle";
+            static constexpr const char* name          = CommandNames::ReturnToIdle;
             static constexpr bool        sync          = false;
-            static constexpr const char* expectedState = "Operational::Idle"; // Immediate
+            static constexpr const char* expectedState = StateNames::Operational_Idle; // Immediate
             std::string                  operator()() const { return name; }
 
             friend void to_json(nlohmann::json& j, const ReturnToIdle&) { j = nlohmann::json::object(); }
@@ -321,7 +321,7 @@ namespace LaserTracker
         /** @brief Home - moves to home position. Valid in: Idle. Sync: Yes */
         struct Home
         {
-            static constexpr const char* name = "Home";
+            static constexpr const char* name = CommandNames::Home;
             static constexpr bool        sync = true;
             double                       speed = 100.0;
             std::string                  operator()() const { return name; }
@@ -335,13 +335,13 @@ namespace LaserTracker
 
             ExecuteResult execute(const std::string& currentState) const
             {
-                if (currentState.find("Idle") == std::string::npos)
+                if (currentState.find(StateNames::Idle) == std::string::npos)
                 {
                     return ExecuteResult::fail("Home command only valid in Idle state (current: " + currentState + ")");
                 }
 
                 std::cout << "  [COMMAND] Home: Moving to home position at " << speed << "% speed\n";
-                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(1000 / (speed / 100.0))));
+                std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<int>(5000 / (speed / 100.0))));
                 std::cout << "  [COMMAND] Home: Homing complete\n";
 
                 nlohmann::json result;
@@ -354,7 +354,7 @@ namespace LaserTracker
         /** @brief GetPosition - retrieves current position. Valid in: Idle, Locked, Measuring. Sync: No */
         struct GetPosition
         {
-            static constexpr const char* name = "GetPosition";
+            static constexpr const char* name = CommandNames::GetPosition;
             static constexpr bool        sync = false;
             std::string                  operator()() const { return name; }
 
@@ -363,8 +363,9 @@ namespace LaserTracker
 
             ExecuteResult execute(const std::string& currentState) const
             {
-                if (currentState.find("Off") != std::string::npos || currentState.find("Initializing") != std::string::npos ||
-                    currentState.find("Error") != std::string::npos)
+                if (currentState.find(StateNames::Off) != std::string::npos ||
+                    currentState.find(StateNames::Initializing) != std::string::npos ||
+                    currentState.find(StateNames::Error) != std::string::npos)
                 {
                     return ExecuteResult::fail("GetPosition not available in " + currentState);
                 }
@@ -384,7 +385,7 @@ namespace LaserTracker
         /** @brief SetLaserPower - adjusts laser power. Valid in: Any Operational. Sync: No */
         struct SetLaserPower
         {
-            static constexpr const char* name = "SetLaserPower";
+            static constexpr const char* name = CommandNames::SetLaserPower;
             static constexpr bool        sync = false;
             double                       powerLevel = 1.0;
             std::string                  operator()() const { return name; }
@@ -398,7 +399,7 @@ namespace LaserTracker
 
             ExecuteResult execute(const std::string& currentState) const
             {
-                if (currentState.find("Off") != std::string::npos)
+                if (currentState.find(StateNames::Off) != std::string::npos)
                 {
                     return ExecuteResult::fail("SetLaserPower not available when powered off");
                 }
@@ -419,7 +420,7 @@ namespace LaserTracker
         /** @brief Compensate - applies environmental compensation. Valid in: Idle, Locked. Sync: Yes */
         struct Compensate
         {
-            static constexpr const char* name = "Compensate";
+            static constexpr const char* name = CommandNames::Compensate;
             static constexpr bool        sync = true;
             double                       temperature = 20.0;
             double                       pressure    = 1013.25;
@@ -442,7 +443,8 @@ namespace LaserTracker
 
             ExecuteResult execute(const std::string& currentState) const
             {
-                if (currentState.find("Idle") == std::string::npos && currentState.find("Locked") == std::string::npos)
+                if (currentState.find(StateNames::Idle) == std::string::npos &&
+                    currentState.find(StateNames::Locked) == std::string::npos)
                 {
                     return ExecuteResult::fail("Compensate only valid in Idle or Locked state");
                 }
@@ -465,7 +467,7 @@ namespace LaserTracker
         /** @brief GetStatus - retrieves system status. Valid in: Any. Sync: No */
         struct GetStatus
         {
-            static constexpr const char* name = "GetStatus";
+            static constexpr const char* name = CommandNames::GetStatus;
             static constexpr bool        sync = false;
             std::string                  operator()() const { return name; }
 
@@ -476,8 +478,8 @@ namespace LaserTracker
             {
                 nlohmann::json result;
                 result[Keys::State]   = currentState;
-                result[Keys::Healthy] = (currentState.find("Error") == std::string::npos);
-                result[Keys::Powered] = (currentState.find("Off") == std::string::npos);
+                result[Keys::Healthy] = (currentState.find(StateNames::Error) == std::string::npos);
+                result[Keys::Powered] = (currentState.find(StateNames::Off) == std::string::npos);
 
                 std::cout << "  [COMMAND] GetStatus: State=" << currentState << "\n";
                 return ExecuteResult::ok(result);
@@ -487,7 +489,7 @@ namespace LaserTracker
         /** @brief MoveRelative - moves tracker by relative amount. Valid in: Idle, Locked. Sync: Yes */
         struct MoveRelative
         {
-            static constexpr const char* name = "MoveRelative";
+            static constexpr const char* name = CommandNames::MoveRelative;
             static constexpr bool        sync = true;
             double                       azimuth   = 0.0;
             double                       elevation = 0.0;
@@ -504,7 +506,8 @@ namespace LaserTracker
 
             ExecuteResult execute(const std::string& currentState) const
             {
-                if (currentState.find("Idle") == std::string::npos && currentState.find("Locked") == std::string::npos)
+                if (currentState.find(StateNames::Idle) == std::string::npos &&
+                    currentState.find(StateNames::Locked) == std::string::npos)
                 {
                     return ExecuteResult::fail("MoveRelative only valid in Idle or Locked state");
                 }
@@ -763,13 +766,13 @@ namespace LaserTracker
 
         struct Off
         {
-            static constexpr const char* name = "Off";
+            static constexpr const char* name = StateNames::Off;
             void onEntry() const { std::cout << "  [ENTRY] Off: Laser tracker powered down\n"; }
             void onExit() const { std::cout << "  [EXIT] Off: Preparing for power up\n"; }
         };
         struct Initializing
         {
-            static constexpr const char* name     = "Initializing";
+            static constexpr const char* name     = StateNames::Initializing;
             int                          progress = 0;
             void onEntry() const { std::cout << "  [ENTRY] Initializing: Starting self-test and calibration\n"; }
             void onExit() const { std::cout << "  [EXIT] Initializing: Self-test complete\n"; }
@@ -781,13 +784,13 @@ namespace LaserTracker
         };
         struct Idle
         {
-            static constexpr const char* name = "Idle";
+            static constexpr const char* name = StateNames::Idle;
             void onEntry() const { std::cout << "  [ENTRY] Idle: Ready for operation, laser standby\n"; }
             void onExit() const { std::cout << "  [EXIT] Idle: Activating laser systems\n"; }
         };
         struct Error
         {
-            static constexpr const char* name      = "Error";
+            static constexpr const char* name      = StateNames::Error;
             int                          errorCode = 0;
             std::string                  description;
             Error() = default;
@@ -802,7 +805,7 @@ namespace LaserTracker
 
         struct Searching
         {
-            static constexpr const char* name        = "Searching";
+            static constexpr const char* name        = StateNames::Searching;
             double                       searchAngle = 0.0;
             void onEntry() const { std::cout << "  [ENTRY] Searching: Scanning for retroreflector target\n"; }
             void onExit() const { std::cout << "  [EXIT] Searching: Target acquisition complete\n"; }
@@ -814,7 +817,7 @@ namespace LaserTracker
         };
         struct Locked
         {
-            static constexpr const char* name              = "Locked";
+            static constexpr const char* name              = StateNames::Locked;
             double                       targetDistance_mm = 0.0;
             Locked()                                       = default;
             explicit Locked(double dist) : targetDistance_mm(dist) {}
@@ -823,7 +826,7 @@ namespace LaserTracker
         };
         struct Measuring
         {
-            static constexpr const char* name             = "Measuring";
+            static constexpr const char* name             = StateNames::Measuring;
             int                          measurementCount = 0;
             double                       lastX = 0.0, lastY = 0.0, lastZ = 0.0;
             void onEntry() const { std::cout << "  [ENTRY] Measuring: Starting precision measurement\n"; }
@@ -852,7 +855,7 @@ namespace LaserTracker
          */
         struct Tracking
         {
-            static constexpr const char* name = "Tracking";
+            static constexpr const char* name = StateNames::Tracking;
             TrackingSubState             subState;
             Tracking() : subState(Searching{}) {}
             explicit Tracking(TrackingSubState sub) : subState(std::move(sub)) {}
@@ -882,7 +885,7 @@ namespace LaserTracker
          */
         struct Operational
         {
-            static constexpr const char* name = "Operational";
+            static constexpr const char* name = StateNames::Operational;
             OperationalSubState          subState;
             Operational() : subState(Initializing{}) {}
             explicit Operational(OperationalSubState sub) : subState(std::move(sub)) {}
