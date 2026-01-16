@@ -1355,6 +1355,229 @@ StateMachine/
 14. **Unified Sync Flag**: Both state-changing commands and action commands support `sync` flag - when `true`, blocks other messages during execution. State-changing commands use this for critical transitions (PowerOn, Reset).
 15. **Expected State Pattern**: State-changing commands can specify an `expectedState` that must be reached before the command returns. Commands like `StartSearch` wait for `TargetFound` event to reach `Locked` state, ensuring the caller knows the operation completed (or timed out).
 
+## Adding New States, Events, or Commands
+
+When extending the HSM with new states, events, or commands, follow these checklists to ensure all necessary files and documentation are updated.
+
+### Adding a New State
+
+1. **Keywords.hpp** - Add the state name constant:
+   ```cpp
+   namespace StateNames
+   {
+       inline constexpr const char* MyNewState = "MyNewState";
+       // If nested, add full path too:
+       inline constexpr const char* Operational_MyNewState = "Operational::MyNewState";
+   }
+   ```
+
+2. **ThreadedHSM.hpp** - Define the state struct:
+   ```cpp
+   struct MyNewState
+   {
+       static constexpr const char* name = StateNames::MyNewState;
+
+       void onEntry() const { /* entry actions */ }
+       void onExit() const { /* exit actions */ }
+   };
+   ```
+
+3. **ThreadedHSM.hpp** - Add to the appropriate state variant:
+   ```cpp
+   using OperationalSubState = std::variant<Initializing, Idle, MyNewState, ...>;
+   ```
+
+4. **ThreadedHSM.hpp** - Add message handler for the new state:
+   ```cpp
+   bool handleMessage(States::MyNewState& state, const StateMessage& msg) { ... }
+   ```
+
+5. **ThreadedHSM.hpp** - Update existing handlers that can transition TO this state
+
+6. **README.md** - Update:
+   - State Hierarchy Mermaid diagram
+   - State Transition Table
+   - Architecture class diagram (if applicable)
+
+7. **Tests** - Add tests for entry/exit actions and transitions
+
+### Adding a New Event
+
+1. **Keywords.hpp** - Add the event name constant:
+   ```cpp
+   namespace EventNames
+   {
+       inline constexpr const char* MyEventOccurred = "MyEventOccurred";
+   }
+   ```
+
+2. **ThreadedHSM.hpp** - Define the event struct (use past tense):
+   ```cpp
+   namespace Events
+   {
+       struct MyEventOccurred
+       {
+           static constexpr const char* name = EventNames::MyEventOccurred;
+           double someParam = 0.0;  // event parameters
+
+           std::string operator()() const { return name; }
+
+           friend void to_json(nlohmann::json& j, const MyEventOccurred& e)
+           {
+               j = nlohmann::json{{Keys::SomeParam, e.someParam}};
+           }
+
+           friend void from_json(const nlohmann::json& j, MyEventOccurred& e)
+           {
+               if (j.contains(Keys::SomeParam))
+                   j.at(Keys::SomeParam).get_to(e.someParam);
+           }
+       };
+   }
+   ```
+
+3. **ThreadedHSM.hpp** - Add to `StateMessage` variant:
+   ```cpp
+   using StateMessage = std::variant<..., Events::MyEventOccurred, ...>;
+   ```
+
+4. **ThreadedHSM.hpp** - Add to `StateMessageRegistry`:
+   ```cpp
+   using StateMessageRegistry = MessageRegistry<..., Events::MyEventOccurred, ...>;
+   ```
+
+5. **ThreadedHSM.hpp** - Update message handlers in states that react to this event
+
+6. **README.md** - Update:
+   - Events table in "Events vs Commands" section
+   - State Transition Table
+   - Message Flow diagram (if applicable)
+   - Interactive Mode Commands (if adding CLI support)
+
+7. **main.cpp** - Add interactive mode command if needed
+
+8. **Tests** - Add tests for event handling and state transitions
+
+### Adding a New Command
+
+#### State-Changing Command
+
+1. **Keywords.hpp** - Add the command name and expected state constants:
+   ```cpp
+   namespace CommandNames
+   {
+       inline constexpr const char* MyCommand = "MyCommand";
+   }
+   namespace StateNames
+   {
+       inline constexpr const char* Operational_TargetState = "Operational::TargetState";
+   }
+   ```
+
+2. **ThreadedHSM.hpp** - Define the command struct (use imperative):
+   ```cpp
+   namespace Commands
+   {
+       struct MyCommand
+       {
+           static constexpr const char* name          = CommandNames::MyCommand;
+           static constexpr bool        sync          = true;  // true if blocking
+           static constexpr const char* expectedState = StateNames::Operational_TargetState;
+
+           std::string operator()() const { return name; }
+
+           friend void to_json(nlohmann::json& j, const MyCommand&)
+           {
+               j = nlohmann::json::object();
+           }
+
+           friend void from_json(const nlohmann::json&, MyCommand&) {}
+       };
+   }
+   ```
+
+3. **ThreadedHSM.hpp** - Add to `StateMessage` variant and `StateMessageRegistry`
+
+4. **ThreadedHSM.hpp** - Update message handlers in states that process this command
+
+5. **README.md** - Update Commands table, State Transition Table
+
+6. **main.cpp** - Add interactive mode command if needed
+
+7. **Tests** - Add tests for command handling
+
+#### Action Command (with execute())
+
+1. **Keywords.hpp** - Add command name and any JSON keys for parameters/results:
+   ```cpp
+   namespace CommandNames
+   {
+       inline constexpr const char* MyAction = "MyAction";
+   }
+   namespace Keys
+   {
+       inline constexpr const char* ResultField = "resultField";
+   }
+   ```
+
+2. **ThreadedHSM.hpp** - Define the command with `execute()` method:
+   ```cpp
+   namespace Commands
+   {
+       struct MyAction
+       {
+           static constexpr const char* name = CommandNames::MyAction;
+           static constexpr bool sync = false;  // true if long-running
+
+           double param = 0.0;  // command parameters
+
+           std::string operator()() const { return name; }
+
+           friend void to_json(nlohmann::json& j, const MyAction& c)
+           {
+               j = nlohmann::json{{Keys::Param, c.param}};
+           }
+
+           friend void from_json(const nlohmann::json& j, MyAction& c)
+           {
+               if (j.contains(Keys::Param))
+                   j.at(Keys::Param).get_to(c.param);
+           }
+
+           ExecuteResult execute(const State& currentState) const
+           {
+               // Type-safe state validation
+               if (!isInState<States::Idle>(currentState))
+               {
+                   return ExecuteResult::fail("MyAction only valid in Idle state");
+               }
+
+               // Perform the action
+               nlohmann::json result;
+               result[Keys::ResultField] = 42;
+               return ExecuteResult::ok(result);
+           }
+       };
+   }
+   ```
+
+3. **ThreadedHSM.hpp** - Add to `StateMessage` variant and `StateMessageRegistry`
+
+4. **README.md** - Update Action Commands table
+
+5. **main.cpp** - Add interactive mode command if needed
+
+6. **Tests** - Add tests for `execute()` validation and results
+
+### Quick Reference Checklist
+
+| Change | Keywords.hpp | ThreadedHSM.hpp | README.md | main.cpp | Tests |
+|--------|--------------|-----------------|-----------|----------|-------|
+| New State | StateNames | Struct, Variant, Handler | Diagram, Table | - | Yes |
+| New Event | EventNames | Struct, Variant, Registry, Handlers | Tables, Diagram | CLI cmd | Yes |
+| State-Changing Cmd | CommandNames, StateNames | Struct, Variant, Registry, Handlers | Tables | CLI cmd | Yes |
+| Action Command | CommandNames, Keys | Struct with execute(), Variant, Registry | Table | CLI cmd | Yes |
+
 ## References
 
 - [nlohmann/json - GitHub](https://github.com/nlohmann/json)
